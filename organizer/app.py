@@ -92,6 +92,9 @@ class OrganizerApp(tk.Tk):
         return self._app_data_dir() / "settings.json"
 
     def _editable_default_rules(self) -> Path:
+        visible_template = Path(sys.executable).parent / "category_rules.txt"
+        if visible_template.is_file():
+            return visible_template
         target = self._app_data_dir() / "分类标准.txt"
         if target.is_file():
             return target
@@ -115,10 +118,10 @@ class OrganizerApp(tk.Tk):
                     continue
 
     def _load_settings(self) -> None:
-        defaults = {"source": "", "rules": str(self._editable_default_rules()), "output": "", "year": str(datetime.now().year - 5), "threshold": "0.70", "api_url": DEFAULT_API_URL, "model": DEFAULT_MODEL}
+        defaults = {"source": "", "rules": "", "output": "", "year": str(datetime.now().year - 5), "threshold": "0.70", "api_url": DEFAULT_API_URL, "model": DEFAULT_MODEL}
         try:
             loaded = json.loads(self._settings_path().read_text(encoding="utf-8"))
-            defaults.update({key: value for key, value in loaded.items() if key in defaults and (key != "rules" or value)})
+            defaults.update({key: value for key, value in loaded.items() if key in defaults and key != "rules"})
         except (OSError, json.JSONDecodeError):
             pass
         self.source_var = tk.StringVar(value=defaults["source"])
@@ -158,7 +161,7 @@ class OrganizerApp(tk.Tk):
         style.configure("Treeview.Heading", font=("Microsoft YaHei UI", 9, "bold"), background="#E8EEF8", foreground="#183B67", padding=7)
 
     def _save_settings(self) -> None:
-        settings = {"source": self.source_var.get(), "rules": self.rules_var.get(), "output": self.output_var.get(), "year": self.year_var.get(), "threshold": self.threshold_var.get(), "api_url": self.api_url_var.get(), "model": self.model_var.get()}
+        settings = {"source": self.source_var.get(), "output": self.output_var.get(), "year": self.year_var.get(), "threshold": self.threshold_var.get(), "api_url": self.api_url_var.get(), "model": self.model_var.get()}
         self._settings_path().write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
         if self.api_key_var.get().strip():
             try:
@@ -178,7 +181,7 @@ class OrganizerApp(tk.Tk):
         ttk.Label(header, text="安全复制原文件 · AI 提供建议 · 老师最后复核", style="SubTitle.TLabel").pack(anchor="w", pady=(3, 0))
 
         self._path_row(outer, 1, "待整理文件夹", self.source_var, self._choose_source, "选择文件夹", "选择需要扫描的资料根文件夹；会递归读取 PDF、DOCX 和 PPTX。")
-        self._path_row(outer, 2, "分类标准（可编辑）", self.rules_var, self._choose_rules, "选择文件", "默认模板已复制到本机设置目录；也可选择资料文件夹中的 分类标准.txt。")
+        self._path_row(outer, 2, "分类标准（可选）", self.rules_var, self._choose_rules, "选择文件", "留空时自动使用程序同级的 category_rules.txt；也可选择资料文件夹中的 分类标准.txt。")
         self._path_row(outer, 3, "复制结果到", self.output_var, self._choose_output, "选择文件夹", "确认后只复制分类结果到这里；原文件绝不会被移动或删除。")
 
         config = ttk.LabelFrame(outer, text="分类设置", padding=8)
@@ -210,14 +213,14 @@ class OrganizerApp(tk.Tk):
         ToolTip(edit_button, "在表格中选择一个文件后，可手动更正其分类；也可以直接双击该行。")
         edit_rules_button = ttk.Button(actions, text="编辑分类标准", command=self._edit_rules)
         edit_rules_button.pack(side="left")
-        ToolTip(edit_rules_button, "用记事本打开当前分类标准。顶格为一级分类，缩进为二级分类。")
+        ToolTip(edit_rules_button, "用记事本打开当前分类标准；路径留空时打开程序自带模板。顶格为一级分类，缩进为二级分类。")
         self.copy_button = ttk.Button(actions, text="2. 确认后复制分类结果", command=self.copy_results, state="disabled")
         self.copy_button.pack(side="left")
         ToolTip(self.copy_button, "仅在你确认后执行安全复制；同名文件会自动编号，原始文件保持不变。")
         open_button = ttk.Button(actions, text="打开结果文件夹", command=self.open_output)
         open_button.pack(side="left", padx=8)
         ToolTip(open_button, "打开已复制完成的分类结果文件夹。")
-        self.status_var = tk.StringVar(value="请选择资料文件夹和分类标准文件。")
+        self.status_var = tk.StringVar(value="请选择资料文件夹；分类标准可留空使用默认模板。")
         ttk.Label(actions, textvariable=self.status_var).pack(side="right")
 
         columns = ("file", "suggestion", "confidence", "reason", "status")
@@ -260,7 +263,7 @@ class OrganizerApp(tk.Tk):
             self.rules_var.set(chosen)
 
     def _edit_rules(self) -> None:
-        rules = Path(self.rules_var.get()).expanduser()
+        rules = Path(self.rules_var.get()).expanduser() if self.rules_var.get().strip() else self._editable_default_rules()
         if not rules.is_file():
             messagebox.showerror(APP_NAME, "当前分类标准文件不存在，请先选择或创建一个文本文件。")
             return
@@ -276,7 +279,7 @@ class OrganizerApp(tk.Tk):
 
     def _read_inputs(self) -> tuple[Path, Path, Path, CategoryRules, int, float]:
         source = Path(self.source_var.get()).expanduser()
-        rules_file = Path(self.rules_var.get()).expanduser()
+        rules_file = Path(self.rules_var.get()).expanduser() if self.rules_var.get().strip() else self._editable_default_rules()
         output = Path(self.output_var.get()).expanduser()
         if not source.is_dir():
             raise ValueError("请选择有效的待整理文件夹。")
@@ -319,6 +322,9 @@ class OrganizerApp(tk.Tk):
         result: list[Path] = []
         resolved_output = output.resolve()
         for file in source.rglob("*"):
+            # macOS resource forks (._*) and Microsoft Office lock files (~$*) are not real documents.
+            if file.name.startswith(("._", "~$")):
+                continue
             if not file.is_file() or file.suffix.lower() not in SUPPORTED_EXTENSIONS:
                 continue
             try:
