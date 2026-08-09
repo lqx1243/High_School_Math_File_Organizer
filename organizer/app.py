@@ -4,6 +4,7 @@ import csv
 import json
 import os
 import shutil
+import sys
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -19,6 +20,41 @@ from .extractors import SUPPORTED_EXTENSIONS, configure_ocr_engine, extract_docu
 
 APP_NAME = "高中数学文件分类工具"
 KEYRING_SERVICE = "HighSchoolMathFileOrganizer"
+
+
+class ToolTip:
+    """轻量悬停提示，不改变既有界面操作方式。"""
+
+    def __init__(self, widget: tk.Widget, text: str) -> None:
+        self.widget = widget
+        self.text = text
+        self.window: tk.Toplevel | None = None
+        self.after_id: str | None = None
+        widget.bind("<Enter>", self._schedule, add=True)
+        widget.bind("<Leave>", self._hide, add=True)
+        widget.bind("<ButtonPress>", self._hide, add=True)
+
+    def _schedule(self, _event=None) -> None:
+        self.after_id = self.widget.after(450, self._show)
+
+    def _show(self) -> None:
+        if self.window or not self.widget.winfo_viewable():
+            return
+        self.window = tk.Toplevel(self.widget)
+        self.window.wm_overrideredirect(True)
+        self.window.attributes("-topmost", True)
+        x = self.widget.winfo_rootx() + 12
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        self.window.wm_geometry(f"+{x}+{y}")
+        tk.Label(self.window, text=self.text, justify="left", wraplength=300, bg="#1F2937", fg="white", padx=10, pady=7, font=("Microsoft YaHei UI", 9)).pack()
+
+    def _hide(self, _event=None) -> None:
+        if self.after_id:
+            self.widget.after_cancel(self.after_id)
+            self.after_id = None
+        if self.window:
+            self.window.destroy()
+            self.window = None
 
 
 @dataclass
@@ -40,21 +76,39 @@ class OrganizerApp(tk.Tk):
         self.title(APP_NAME)
         self.geometry("1240x720")
         self.minsize(960, 600)
+        self._configure_styles()
         self.items: list[ReviewItem] = []
         self.busy = False
         self._load_settings()
         self._build_widgets()
 
-    def _settings_path(self) -> Path:
+    def _app_data_dir(self) -> Path:
         base = Path(os.environ.get("APPDATA", Path.home() / ".config")) / "HighSchoolMathFileOrganizer"
         base.mkdir(parents=True, exist_ok=True)
-        return base / "settings.json"
+        return base
+
+    def _settings_path(self) -> Path:
+        return self._app_data_dir() / "settings.json"
+
+    def _editable_default_rules(self) -> Path:
+        target = self._app_data_dir() / "分类标准.txt"
+        if target.is_file():
+            return target
+        roots = [Path(getattr(sys, "_MEIPASS", "")), Path(__file__).resolve().parents[1]]
+        for root in roots:
+            candidate = root / "defaults" / "分类标准.txt"
+            if not candidate.is_file():
+                candidate = root / "分类标准.txt"
+            if candidate.is_file():
+                shutil.copy2(candidate, target)
+                return target
+        return target
 
     def _load_settings(self) -> None:
-        defaults = {"source": "", "rules": "", "output": "", "year": str(datetime.now().year - 5), "threshold": "0.70", "api_url": DEFAULT_API_URL, "model": DEFAULT_MODEL}
+        defaults = {"source": "", "rules": str(self._editable_default_rules()), "output": "", "year": str(datetime.now().year - 5), "threshold": "0.70", "api_url": DEFAULT_API_URL, "model": DEFAULT_MODEL}
         try:
             loaded = json.loads(self._settings_path().read_text(encoding="utf-8"))
-            defaults.update({key: value for key, value in loaded.items() if key in defaults})
+            defaults.update({key: value for key, value in loaded.items() if key in defaults and (key != "rules" or value)})
         except (OSError, json.JSONDecodeError):
             pass
         self.source_var = tk.StringVar(value=defaults["source"])
@@ -70,6 +124,29 @@ class OrganizerApp(tk.Tk):
             saved_key = ""
         self.api_key_var = tk.StringVar(value=saved_key)
 
+    def _configure_styles(self) -> None:
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        background = "#F4F7FB"
+        self.configure(bg=background)
+        style.configure("TFrame", background=background)
+        style.configure("Header.TFrame", background="#EAF2FF")
+        style.configure("TLabel", background=background, foreground="#1F2937", font=("Microsoft YaHei UI", 9))
+        style.configure("Title.TLabel", background="#EAF2FF", foreground="#123B6D", font=("Microsoft YaHei UI", 16, "bold"))
+        style.configure("SubTitle.TLabel", background="#EAF2FF", foreground="#4B5563", font=("Microsoft YaHei UI", 9))
+        style.configure("TLabelframe", background=background, bordercolor="#D7E0ED")
+        style.configure("TLabelframe.Label", background=background, foreground="#123B6D", font=("Microsoft YaHei UI", 9, "bold"))
+        style.configure("TEntry", padding=5)
+        style.configure("TCombobox", padding=5)
+        style.configure("TButton", padding=(10, 6), font=("Microsoft YaHei UI", 9))
+        style.configure("Accent.TButton", background="#2563EB", foreground="white")
+        style.map("Accent.TButton", background=[("active", "#1D4ED8"), ("disabled", "#A8BCE9")])
+        style.configure("Treeview", rowheight=30, font=("Microsoft YaHei UI", 9), background="white", fieldbackground="white")
+        style.configure("Treeview.Heading", font=("Microsoft YaHei UI", 9, "bold"), background="#E8EEF8", foreground="#183B67", padding=7)
+
     def _save_settings(self) -> None:
         settings = {"source": self.source_var.get(), "rules": self.rules_var.get(), "output": self.output_var.get(), "year": self.year_var.get(), "threshold": self.threshold_var.get(), "api_url": self.api_url_var.get(), "model": self.model_var.get()}
         self._settings_path().write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -84,31 +161,52 @@ class OrganizerApp(tk.Tk):
         outer = ttk.Frame(self, padding=12)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(1, weight=1)
-        self._path_row(outer, 0, "待整理文件夹", self.source_var, self._choose_source, "选择文件夹")
-        self._path_row(outer, 1, "分类标准.txt", self.rules_var, self._choose_rules, "选择文件")
-        self._path_row(outer, 2, "复制结果到", self.output_var, self._choose_output, "选择文件夹")
+
+        header = ttk.Frame(outer, style="Header.TFrame", padding=(16, 12))
+        header.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 12))
+        ttk.Label(header, text=APP_NAME, style="Title.TLabel").pack(anchor="w")
+        ttk.Label(header, text="安全复制原文件 · AI 提供建议 · 老师最后复核", style="SubTitle.TLabel").pack(anchor="w", pady=(3, 0))
+
+        self._path_row(outer, 1, "待整理文件夹", self.source_var, self._choose_source, "选择文件夹", "选择需要扫描的资料根文件夹；会递归读取 PDF、DOCX 和 PPTX。")
+        self._path_row(outer, 2, "分类标准（可编辑）", self.rules_var, self._choose_rules, "选择文件", "默认模板已复制到本机设置目录；也可选择资料文件夹中的 分类标准.txt。")
+        self._path_row(outer, 3, "复制结果到", self.output_var, self._choose_output, "选择文件夹", "确认后只复制分类结果到这里；原文件绝不会被移动或删除。")
 
         config = ttk.LabelFrame(outer, text="分类设置", padding=8)
-        config.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 10))
+        config.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 10))
         for column in (1, 3, 5):
             config.columnconfigure(column, weight=1)
         ttk.Label(config, text="历史截止年份：").grid(row=0, column=0, sticky="w")
-        ttk.Spinbox(config, from_=1980, to=datetime.now().year + 1, textvariable=self.year_var, width=8).grid(row=0, column=1, sticky="w")
+        year_box = ttk.Spinbox(config, from_=1980, to=datetime.now().year + 1, textvariable=self.year_var, width=8)
+        year_box.grid(row=0, column=1, sticky="w")
+        ToolTip(year_box, "编辑年份，例如 2021 代表最后编辑年份为 2020 或更早的文件进入“历史文件”。")
         ttk.Label(config, text="低置信度阈值：").grid(row=0, column=2, padx=(16, 0), sticky="w")
-        ttk.Spinbox(config, from_=0.1, to=1.0, increment=0.05, textvariable=self.threshold_var, width=8).grid(row=0, column=3, sticky="w")
+        threshold_box = ttk.Spinbox(config, from_=0.1, to=1.0, increment=0.05, textvariable=self.threshold_var, width=8)
+        threshold_box.grid(row=0, column=3, sticky="w")
+        ToolTip(threshold_box, "模型置信度低于该值时，文件将进入“无法分类”，等待人工处理。")
         ttk.Label(config, text="低于此值进入“无法分类”").grid(row=0, column=4, columnspan=2, sticky="w")
         ttk.Label(config, text="DeepSeek API Key：").grid(row=1, column=0, pady=(8, 0), sticky="w")
-        ttk.Entry(config, textvariable=self.api_key_var, show="●", width=36).grid(row=1, column=1, columnspan=3, pady=(8, 0), sticky="ew")
+        api_key_entry = ttk.Entry(config, textvariable=self.api_key_var, show="●", width=36)
+        api_key_entry.grid(row=1, column=1, columnspan=3, pady=(8, 0), sticky="ew")
+        ToolTip(api_key_entry, "仅用于调用 DeepSeek；会优先保存在 Windows 凭据管理器，不写入普通设置文件。")
         ttk.Label(config, text="首次使用填写一次；安全保存在 Windows 凭据管理器。").grid(row=1, column=4, columnspan=2, pady=(8, 0), sticky="w")
 
         actions = ttk.Frame(outer)
-        actions.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(0, 8))
-        self.scan_button = ttk.Button(actions, text="1. 扫描并生成分类建议", command=self.start_scan)
+        actions.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        self.scan_button = ttk.Button(actions, text="1. 扫描并生成分类建议", command=self.start_scan, style="Accent.TButton")
         self.scan_button.pack(side="left")
-        ttk.Button(actions, text="修改选中文件分类", command=self.edit_selected).pack(side="left", padx=8)
+        ToolTip(self.scan_button, "读取文件内容并生成建议。扫描过程中不会复制、移动或删除任何文件。")
+        edit_button = ttk.Button(actions, text="修改选中文件分类", command=self.edit_selected)
+        edit_button.pack(side="left", padx=8)
+        ToolTip(edit_button, "在表格中选择一个文件后，可手动更正其分类；也可以直接双击该行。")
+        edit_rules_button = ttk.Button(actions, text="编辑分类标准", command=self._edit_rules)
+        edit_rules_button.pack(side="left")
+        ToolTip(edit_rules_button, "用记事本打开当前分类标准。顶格为一级分类，缩进为二级分类。")
         self.copy_button = ttk.Button(actions, text="2. 确认后复制分类结果", command=self.copy_results, state="disabled")
         self.copy_button.pack(side="left")
-        ttk.Button(actions, text="打开结果文件夹", command=self.open_output).pack(side="left", padx=8)
+        ToolTip(self.copy_button, "仅在你确认后执行安全复制；同名文件会自动编号，原始文件保持不变。")
+        open_button = ttk.Button(actions, text="打开结果文件夹", command=self.open_output)
+        open_button.pack(side="left", padx=8)
+        ToolTip(open_button, "打开已复制完成的分类结果文件夹。")
         self.status_var = tk.StringVar(value="请选择资料文件夹和分类标准文件。")
         ttk.Label(actions, textvariable=self.status_var).pack(side="right")
 
@@ -121,15 +219,20 @@ class OrganizerApp(tk.Tk):
             self.table.column(name, width=widths[name], minwidth=60, anchor="w")
         scrollbar = ttk.Scrollbar(outer, orient="vertical", command=self.table.yview)
         self.table.configure(yscrollcommand=scrollbar.set)
-        self.table.grid(row=5, column=0, columnspan=2, sticky="nsew")
-        scrollbar.grid(row=5, column=2, sticky="ns")
-        outer.rowconfigure(5, weight=1)
+        self.table.grid(row=6, column=0, columnspan=2, sticky="nsew")
+        scrollbar.grid(row=6, column=2, sticky="ns")
+        outer.rowconfigure(6, weight=1)
         self.table.bind("<Double-1>", lambda _event: self.edit_selected())
+        ToolTip(self.table, "查看 AI 的分类依据和置信度。双击一行即可人工调整结果。")
 
-    def _path_row(self, parent: ttk.Frame, row: int, label: str, variable: tk.StringVar, command, button: str) -> None:
+    def _path_row(self, parent: ttk.Frame, row: int, label: str, variable: tk.StringVar, command, button: str, hint: str) -> None:
         ttk.Label(parent, text=f"{label}：").grid(row=row, column=0, sticky="w", pady=3)
-        ttk.Entry(parent, textvariable=variable).grid(row=row, column=1, sticky="ew", pady=3)
-        ttk.Button(parent, text=button, command=command).grid(row=row, column=2, padx=(8, 0), pady=3)
+        entry = ttk.Entry(parent, textvariable=variable)
+        entry.grid(row=row, column=1, sticky="ew", pady=3)
+        action = ttk.Button(parent, text=button, command=command)
+        action.grid(row=row, column=2, padx=(8, 0), pady=3)
+        ToolTip(entry, hint)
+        ToolTip(action, hint)
 
     def _choose_source(self) -> None:
         chosen = filedialog.askdirectory(title="选择待整理资料所在文件夹")
@@ -145,6 +248,16 @@ class OrganizerApp(tk.Tk):
         chosen = filedialog.askopenfilename(title="选择分类标准.txt", filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")])
         if chosen:
             self.rules_var.set(chosen)
+
+    def _edit_rules(self) -> None:
+        rules = Path(self.rules_var.get()).expanduser()
+        if not rules.is_file():
+            messagebox.showerror(APP_NAME, "当前分类标准文件不存在，请先选择或创建一个文本文件。")
+            return
+        if os.name == "nt":
+            os.startfile(rules)  # type: ignore[attr-defined]
+        else:
+            messagebox.showinfo(APP_NAME, f"分类标准文件：{rules}")
 
     def _choose_output(self) -> None:
         chosen = filedialog.askdirectory(title="选择分类结果保存位置")

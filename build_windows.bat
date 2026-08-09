@@ -31,7 +31,7 @@ if not exist vendor\tesseract\tesseract.exe (
   exit /b 1
 )
 
-.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name "HighSchoolMathFileOrganizer" --collect-all fitz --collect-all docx --collect-all pptx --collect-all PIL main.py
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name "HighSchoolMathFileOrganizer" --add-data "分类标准.txt;defaults" --collect-all pypdf --collect-all pypdfium2 --collect-all docx --collect-all pptx --collect-all PIL main.py
 if errorlevel 1 (
   echo Packaging failed. Please send the error text above.
   pause

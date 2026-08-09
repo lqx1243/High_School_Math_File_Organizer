@@ -52,26 +52,27 @@ def extract_document(path: str | Path) -> ExtractionResult:
 
 def _extract_pdf(path: Path) -> ExtractionResult:
     try:
-        import fitz
+        import pypdf
+        import pypdfium2 as pdfium
     except ImportError:
         return ExtractionResult(warnings=["PDF 组件尚未安装。"])
     try:
-        pdf = fitz.open(path)
-        chunks = [page.get_text("text") for page in pdf]
+        reader = pypdf.PdfReader(path)
+        chunks = [page.extract_text() or "" for page in reader.pages]
         text = "\n".join(chunks).strip()
-        needs_ocr = len(text) < max(200, len(pdf) * 80)
+        needs_ocr = len(text) < max(200, len(reader.pages) * 80)
         if not needs_ocr:
-            pdf.close()
             return ExtractionResult(text=text)
+
+        pdf = pdfium.PdfDocument(path)
         ocr_text: list[str] = []
         for index, page in enumerate(pdf):
             if index >= MAX_OCR_PAGES:
                 break
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-            found = _ocr_image(Image.open(io.BytesIO(pixmap.tobytes("png"))))
+            bitmap = page.render(scale=2)
+            found = _ocr_image(bitmap.to_pil())
             if found:
                 ocr_text.append(found)
-        pdf.close()
         if ocr_text:
             return ExtractionResult(text=(text + "\n" + "\n".join(ocr_text)).strip(), ocr_used=True)
         return ExtractionResult(text=text, warnings=["此 PDF 文字很少，但本机 OCR 没有可用结果。"])
