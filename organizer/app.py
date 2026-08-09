@@ -96,12 +96,10 @@ class OrganizerApp(tk.Tk):
             return target
         roots = [Path(getattr(sys, "_MEIPASS", "")), Path(__file__).resolve().parents[1]]
         for root in roots:
-            candidate = root / "defaults" / "分类标准.txt"
-            if not candidate.is_file():
-                candidate = root / "分类标准.txt"
-            if candidate.is_file():
-                shutil.copy2(candidate, target)
-                return target
+            for candidate in (root / "defaults" / "category_rules.txt", root / "defaults" / "分类标准.txt", root / "分类标准.txt"):
+                if candidate.is_file():
+                    shutil.copy2(candidate, target)
+                    return target
         return target
 
     def _load_settings(self) -> None:

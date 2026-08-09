@@ -1,8 +1,7 @@
 @echo off
 setlocal
-chcp 65001 >nul
 
-REM This file deliberately uses the working "python" command, not the optional "py" launcher.
+REM Use the working "python" command, not the optional "py" launcher.
 python --version
 if errorlevel 1 (
   echo Python 3.12 was not found. Install Python and make sure "python" works in Command Prompt.
@@ -31,7 +30,7 @@ if not exist vendor\tesseract\tesseract.exe (
   exit /b 1
 )
 
-.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name "HighSchoolMathFileOrganizer" --add-data "分类标准.txt;defaults" --collect-all pypdf --collect-all pypdfium2 --collect-all docx --collect-all pptx --collect-all PIL main.py
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name "HighSchoolMathFileOrganizer" --add-data "defaults;defaults" --collect-all pypdf --collect-all pypdfium2 --collect-all docx --collect-all pptx --collect-all PIL main.py
 if errorlevel 1 (
   echo Packaging failed. Please send the error text above.
   pause
