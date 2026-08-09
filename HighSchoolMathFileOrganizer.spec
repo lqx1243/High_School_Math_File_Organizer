@@ -3,7 +3,9 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('assets', 'assets'), ('defaults', 'defaults')]
 binaries = []
-hiddenimports = []
+hiddenimports = ['pythoncom', 'pywintypes']
+tmp_ret = collect_all('win32com')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('pypdf')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('pypdfium2')
