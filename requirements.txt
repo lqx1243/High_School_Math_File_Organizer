@@ -6,3 +6,4 @@ Pillow>=10.0.0
 pytesseract>=0.3.13
 requests>=2.32.0
 keyring>=25.0.0
+pywin32>=308; sys_platform == "win32"

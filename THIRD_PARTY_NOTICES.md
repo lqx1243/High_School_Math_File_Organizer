@@ -9,5 +9,6 @@ This project is licensed under GPL-3.0. The following runtime dependencies have 
 - Pillow: HPND.
 - pytesseract and Requests: Apache-2.0.
 - keyring: MIT.
+- pywin32: Python Software Foundation License.
 
 The Windows bundle is distributed together with the relevant installed-package metadata and the Tesseract licence. This notice is informational and does not replace the licence texts shipped by the dependencies.

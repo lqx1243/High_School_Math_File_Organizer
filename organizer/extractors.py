@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image
 
 LOGGER = logging.getLogger(__name__)
-SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx"}
+SUPPORTED_EXTENSIONS = {".pdf", ".doc", ".docx", ".ppt", ".pptx"}
 MAX_OCR_PAGES = 30
 MAX_OCR_IMAGES = 30
 
@@ -45,8 +45,12 @@ def extract_document(path: str | Path) -> ExtractionResult:
         return _extract_pdf(document)
     if suffix == ".docx":
         return _extract_docx(document)
+    if suffix == ".doc":
+        return _extract_legacy_doc(document)
     if suffix == ".pptx":
         return _extract_pptx(document)
+    if suffix == ".ppt":
+        return _extract_legacy_ppt(document)
     return ExtractionResult(warnings=[f"不支持的格式：{suffix}"])
 
 
@@ -95,6 +99,31 @@ def _extract_docx(path: Path) -> ExtractionResult:
         return ExtractionResult(warnings=[f"无法读取 Word 文件：{error}"])
 
 
+def _extract_legacy_doc(path: Path) -> ExtractionResult:
+    """通过已安装的 Microsoft Word 读取旧 .doc，不要求用户手动转换。"""
+    word = document = None
+    try:
+        client = _office_client()
+        word = client.DispatchEx("Word.Application")
+        word.Visible = False
+        word.DisplayAlerts = 0
+        document = word.Documents.Open(str(path.resolve()), False, True, False)
+        return ExtractionResult(text=(document.Content.Text or "").strip())
+    except Exception as error:
+        return ExtractionResult(warnings=[f"无法读取旧 Word .doc：{_office_help(error)}"])
+    finally:
+        if document is not None:
+            try:
+                document.Close(False)
+            except Exception:
+                pass
+        if word is not None:
+            try:
+                word.Quit()
+            except Exception:
+                pass
+
+
 def _extract_pptx(path: Path) -> ExtractionResult:
     try:
         from pptx import Presentation
@@ -111,6 +140,54 @@ def _extract_pptx(path: Path) -> ExtractionResult:
     except Exception as error:
         LOGGER.exception("Could not extract PPTX: %s", path)
         return ExtractionResult(warnings=[f"无法读取 PowerPoint 文件：{error}"])
+
+
+def _extract_legacy_ppt(path: Path) -> ExtractionResult:
+    """通过已安装的 Microsoft PowerPoint 读取旧 .ppt 的文字内容。"""
+    powerpoint = presentation = None
+    try:
+        client = _office_client()
+        powerpoint = client.DispatchEx("PowerPoint.Application")
+        presentation = powerpoint.Presentations.Open(str(path.resolve()), True, False, False)
+        parts: list[str] = []
+        for slide in presentation.Slides:
+            for shape in slide.Shapes:
+                if shape.HasTextFrame and shape.TextFrame.HasText:
+                    parts.append(shape.TextFrame.TextRange.Text)
+                if shape.HasTable:
+                    for row in range(1, shape.Table.Rows.Count + 1):
+                        for column in range(1, shape.Table.Columns.Count + 1):
+                            parts.append(shape.Table.Cell(row, column).Shape.TextFrame.TextRange.Text)
+        return ExtractionResult(text="\n".join(parts).strip())
+    except Exception as error:
+        return ExtractionResult(warnings=[f"无法读取旧 PowerPoint .ppt：{_office_help(error)}"])
+    finally:
+        if presentation is not None:
+            try:
+                presentation.Close()
+            except Exception:
+                pass
+        if powerpoint is not None:
+            try:
+                powerpoint.Quit()
+            except Exception:
+                pass
+
+
+def _office_client():
+    if os.name != "nt":
+        raise RuntimeError("旧 Office 格式只能在 Windows 上读取")
+    try:
+        import win32com.client
+        return win32com.client
+    except ImportError as error:
+        raise RuntimeError("缺少 Windows Office 读取组件") from error
+
+
+def _office_help(error: Exception) -> str:
+    if os.name == "nt":
+        return f"请确认本机已安装 Microsoft Word/PowerPoint，然后重试。（{error}）"
+    return str(error)
 
 
 def _append_embedded_image_ocr(path: Path, prefix: str, text: str) -> ExtractionResult:

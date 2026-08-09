@@ -32,10 +32,10 @@
 
 ## 支持的文件与 OCR
 
-- 直接支持：`PDF`、`DOCX`、`PPTX`。
+- 直接支持：`PDF`、`DOCX`、`PPTX`；若本机安装 Microsoft Office，也支持旧 `.doc`、`.ppt`。
 - 扫描 PDF：正文太少时会将页面交给本机 OCR；图片为主的 DOCX/PPTX 也会尝试识别其中的图片。
 - OCR 使用 Tesseract 的简体中文和英文语言包（`chi_sim` + `eng`）。OCR 很难完整识别数学公式，因此公式型资料尤其需要人工复核。
-- 旧格式 `.doc`、`.ppt` 不在首版直接支持范围内。请先在 Word/PowerPoint 中“另存为” `.docx`/`.pptx`；后续可以增加自动转换功能。
+- 旧 `.doc`、`.ppt` 会通过本机已安装的 Microsoft Word/PowerPoint 读取；若未安装对应 Office，软件会提示并仍可依据文件名低置信度分类，也可手动另存为 `.docx`/`.pptx`。
 
 ## 首次使用（给老师）
 

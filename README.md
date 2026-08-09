@@ -18,7 +18,7 @@
 
 ## 功能
 
-- 支持 PDF、DOCX、PPTX；
+- 支持 PDF、DOCX、PPTX，以及安装 Microsoft Office 时的旧 `.doc`、`.ppt`；
 - 本机 OCR 处理扫描 PDF，以及图片为主的 Word/PowerPoint；
 - 先判断一级分类，再仅在对应一级分类下判断二级分类；
 - 结合文件名和正文内容；
@@ -44,7 +44,7 @@
 
 - 文件名和文字摘录会发送给 DeepSeek API；请自行管理 API Key 与账户额度。
 - OCR 对图片中的数学公式并不完全可靠，尤其需要人工复核。
-- 首版直接支持现代 Office 格式 `.docx`、`.pptx`；旧 `.doc`、`.ppt` 请先另存为新格式。
+- 旧 `.doc`、`.ppt` 通过本机已安装的 Microsoft Word/PowerPoint 读取；若电脑未安装对应 Office，仍可先按文件名低置信度分类，或手动另存为新格式。
 
 ## 开发与许可证
 
