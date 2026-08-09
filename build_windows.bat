@@ -30,12 +30,13 @@ if not exist vendor\tesseract\tesseract.exe (
   exit /b 1
 )
 
-.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name "HighSchoolMathFileOrganizer" --add-data "defaults;defaults" --collect-all pypdf --collect-all pypdfium2 --collect-all docx --collect-all pptx --collect-all PIL main.py
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name "HighSchoolMathFileOrganizer" --icon "assets\app_icon.ico" --add-data "assets;assets" --add-data "defaults;defaults" --collect-all pypdf --collect-all pypdfium2 --collect-all docx --collect-all pptx --collect-all PIL main.py
 if errorlevel 1 (
   echo Packaging failed. Please send the error text above.
   pause
   exit /b 1
 )
+copy /Y defaults\category_rules.txt dist\HighSchoolMathFileOrganizer\category_rules.txt >nul
 xcopy /E /I /Y vendor\tesseract dist\HighSchoolMathFileOrganizer\tesseract >nul
 
 echo.

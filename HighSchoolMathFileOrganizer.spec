@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('defaults', 'defaults')]
+datas = [('assets', 'assets'), ('defaults', 'defaults')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('pypdf')
@@ -47,6 +47,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['assets/app_icon.ico'],
 )
 coll = COLLECT(
     exe,

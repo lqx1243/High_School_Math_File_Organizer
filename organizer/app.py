@@ -74,6 +74,7 @@ class OrganizerApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_NAME)
+        self._configure_window_icon()
         self.geometry("1240x720")
         self.minsize(960, 600)
         self._configure_styles()
@@ -94,13 +95,24 @@ class OrganizerApp(tk.Tk):
         target = self._app_data_dir() / "分类标准.txt"
         if target.is_file():
             return target
-        roots = [Path(getattr(sys, "_MEIPASS", "")), Path(__file__).resolve().parents[1]]
+        roots = [Path(sys.executable).parent, Path(getattr(sys, "_MEIPASS", "")), Path(__file__).resolve().parents[1]]
         for root in roots:
-            for candidate in (root / "defaults" / "category_rules.txt", root / "defaults" / "分类标准.txt", root / "分类标准.txt"):
+            for candidate in (root / "category_rules.txt", root / "defaults" / "category_rules.txt", root / "defaults" / "分类标准.txt", root / "分类标准.txt"):
                 if candidate.is_file():
                     shutil.copy2(candidate, target)
                     return target
         return target
+
+    def _configure_window_icon(self) -> None:
+        roots = [Path(sys.executable).parent, Path(getattr(sys, "_MEIPASS", "")), Path(__file__).resolve().parents[1]]
+        for root in roots:
+            icon = root / "assets" / "app_icon.ico"
+            if icon.is_file():
+                try:
+                    self.iconbitmap(default=str(icon))
+                    return
+                except tk.TclError:
+                    continue
 
     def _load_settings(self) -> None:
         defaults = {"source": "", "rules": str(self._editable_default_rules()), "output": "", "year": str(datetime.now().year - 5), "threshold": "0.70", "api_url": DEFAULT_API_URL, "model": DEFAULT_MODEL}
