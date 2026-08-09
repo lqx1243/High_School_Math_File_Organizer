@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+import io
+import logging
+import os
+import sys
+import zipfile
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from PIL import Image
+
+LOGGER = logging.getLogger(__name__)
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".pptx"}
+MAX_OCR_PAGES = 30
+MAX_OCR_IMAGES = 30
+
+
+@dataclass
+class ExtractionResult:
+    text: str = ""
+    warnings: list[str] = field(default_factory=list)
+    ocr_used: bool = False
+
+
+def configure_ocr_engine() -> None:
+    """让 Windows 打包版优先使用随应用分发的 Tesseract。"""
+    try:
+        import pytesseract
+    except ImportError:
+        return
+    roots = [Path(getattr(sys, "_MEIPASS", "")), Path(sys.executable).parent, Path(__file__).resolve().parents[1]]
+    for root in roots:
+        binary = root / "tesseract" / "tesseract.exe"
+        if binary.is_file():
+            pytesseract.pytesseract.tesseract_cmd = str(binary)
+            os.environ.setdefault("TESSDATA_PREFIX", str(binary.parent / "tessdata"))
+            return
+
+
+def extract_document(path: str | Path) -> ExtractionResult:
+    document = Path(path)
+    suffix = document.suffix.lower()
+    if suffix == ".pdf":
+        return _extract_pdf(document)
+    if suffix == ".docx":
+        return _extract_docx(document)
+    if suffix == ".pptx":
+        return _extract_pptx(document)
+    return ExtractionResult(warnings=[f"不支持的格式：{suffix}"])
+
+
+def _extract_pdf(path: Path) -> ExtractionResult:
+    try:
+        import fitz
+    except ImportError:
+        return ExtractionResult(warnings=["PDF 组件尚未安装。"])
+    try:
+        pdf = fitz.open(path)
+        chunks = [page.get_text("text") for page in pdf]
+        text = "\n".join(chunks).strip()
+        needs_ocr = len(text) < max(200, len(pdf) * 80)
+        if not needs_ocr:
+            pdf.close()
+            return ExtractionResult(text=text)
+        ocr_text: list[str] = []
+        for index, page in enumerate(pdf):
+            if index >= MAX_OCR_PAGES:
+                break
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            found = _ocr_image(Image.open(io.BytesIO(pixmap.tobytes("png"))))
+            if found:
+                ocr_text.append(found)
+        pdf.close()
+        if ocr_text:
+            return ExtractionResult(text=(text + "\n" + "\n".join(ocr_text)).strip(), ocr_used=True)
+        return ExtractionResult(text=text, warnings=["此 PDF 文字很少，但本机 OCR 没有可用结果。"])
+    except Exception as error:
+        LOGGER.exception("Could not extract PDF: %s", path)
+        return ExtractionResult(warnings=[f"无法读取 PDF：{error}"])
+
+
+def _extract_docx(path: Path) -> ExtractionResult:
+    try:
+        from docx import Document
+        document = Document(path)
+        parts = [paragraph.text for paragraph in document.paragraphs]
+        for table in document.tables:
+            for row in table.rows:
+                parts.extend(cell.text for cell in row.cells)
+        return _append_embedded_image_ocr(path, "word/media/", "\n".join(parts).strip())
+    except Exception as error:
+        LOGGER.exception("Could not extract DOCX: %s", path)
+        return ExtractionResult(warnings=[f"无法读取 Word 文件：{error}"])
+
+
+def _extract_pptx(path: Path) -> ExtractionResult:
+    try:
+        from pptx import Presentation
+        presentation = Presentation(path)
+        parts: list[str] = []
+        for slide in presentation.slides:
+            for shape in slide.shapes:
+                if getattr(shape, "has_text_frame", False):
+                    parts.append(shape.text)
+                if getattr(shape, "has_table", False):
+                    for row in shape.table.rows:
+                        parts.extend(cell.text for cell in row.cells)
+        return _append_embedded_image_ocr(path, "ppt/media/", "\n".join(parts).strip())
+    except Exception as error:
+        LOGGER.exception("Could not extract PPTX: %s", path)
+        return ExtractionResult(warnings=[f"无法读取 PowerPoint 文件：{error}"])
+
+
+def _append_embedded_image_ocr(path: Path, prefix: str, text: str) -> ExtractionResult:
+    if len(text) >= 300:
+        return ExtractionResult(text=text)
+    ocr_text: list[str] = []
+    try:
+        with zipfile.ZipFile(path) as archive:
+            images = [item for item in archive.namelist() if item.startswith(prefix)]
+            for image_name in images[:MAX_OCR_IMAGES]:
+                try:
+                    image = Image.open(io.BytesIO(archive.read(image_name)))
+                    found = _ocr_image(image)
+                    if found:
+                        ocr_text.append(found)
+                except Exception:
+                    LOGGER.debug("Skipping embedded image %s in %s", image_name, path)
+    except Exception:
+        LOGGER.debug("Cannot inspect embedded images in %s", path, exc_info=True)
+    if ocr_text:
+        return ExtractionResult(text=(text + "\n" + "\n".join(ocr_text)).strip(), ocr_used=True)
+    warning = "文字内容很少，已尝试读取内嵌图片，但本机 OCR 没有可用结果。"
+    return ExtractionResult(text=text, warnings=[warning] if len(text) < 100 else [])
+
+
+def _ocr_image(image: Image.Image) -> str:
+    try:
+        import pytesseract
+        return pytesseract.image_to_string(image.convert("RGB"), lang="chi_sim+eng").strip()
+    except Exception:
+        LOGGER.debug("OCR unavailable", exc_info=True)
+        return ""
