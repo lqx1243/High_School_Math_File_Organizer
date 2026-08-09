@@ -292,19 +292,28 @@ class OrganizerApp(tk.Tk):
         except OSError as error:
             messagebox.showerror(APP_NAME, f"删除缓存失败：{error}")
 
-    def _editable_default_rules(self) -> Path:
-        visible_template = Path(sys.executable).parent / "category_rules.txt"
-        if visible_template.is_file():
-            return visible_template
-        target = self._app_data_dir() / "分类标准.txt"
-        if target.is_file():
-            return target
+    def _default_rules_file(self) -> Path:
         roots = [Path(sys.executable).parent, Path(getattr(sys, "_MEIPASS", "")), Path(__file__).resolve().parents[1]]
         for root in roots:
-            for candidate in (root / "category_rules.txt", root / "defaults" / "category_rules.txt", root / "defaults" / "分类标准.txt", root / "分类标准.txt"):
+            for candidate in (root / "defaults" / "category_rules.txt", root / "defaults" / "分类标准.txt"):
                 if candidate.is_file():
-                    shutil.copy2(candidate, target)
-                    return target
+                    return candidate
+        return Path(sys.executable).parent / "defaults" / "category_rules.txt"
+
+    def _active_rules_file(self) -> Path:
+        custom_path = self.rules_var.get().strip()
+        return Path(custom_path).expanduser() if custom_path else self._default_rules_file()
+
+    def _editable_default_rules(self) -> Path:
+        """把随软件提供的模板复制到用户目录，再作为自定义规则编辑。"""
+        target = self._app_data_dir() / "分类标准.txt"
+        if not target.is_file():
+            default_rules = self._default_rules_file()
+            if not default_rules.is_file():
+                raise ValueError("未找到软件自带的默认分类标准。")
+            shutil.copy2(default_rules, target)
+        self.rules_var.set(str(target))
+        self._validate_rules(show_errors=False)
         return target
 
     def _third_party_notices_text(self) -> str:
@@ -362,7 +371,7 @@ class OrganizerApp(tk.Tk):
         content += "\n\n\n第三方鸣谢与许可证\n\n" + self._readable_markdown(self._third_party_notices_text())
         notice.insert("1.0", content)
         notice.configure(state="disabled")
-        ttk.Button(dialog, text="关闭", command=dialog.destroy, style="Accent.TButton").pack(anchor="e", padx=18, pady=(0, 16))
+        ttk.Button(dialog, text="关闭", command=dialog.destroy, style="Soft.TButton").pack(anchor="e", padx=18, pady=(0, 16))
 
     def _configure_window_icon(self) -> None:
         roots = [Path(sys.executable).parent, Path(getattr(sys, "_MEIPASS", "")), Path(__file__).resolve().parents[1]]
@@ -427,8 +436,6 @@ class OrganizerApp(tk.Tk):
         style.configure("TButton", padding=(10, 6), font=("Microsoft YaHei UI", 9))
         style.configure("Soft.TButton", padding=(10, 6))
         style.map("Soft.TButton", background=[("active", "#D7E7FF")], foreground=[("active", "#123B6D")])
-        style.configure("Accent.TButton", background="#2563EB", foreground="white")
-        style.map("Accent.TButton", background=[("active", "#1D4ED8"), ("disabled", "#A8BCE9")], foreground=[("disabled", "#F8FAFC")])
         style.configure("Navigation.TLabel", background=background, foreground="#64748B", font=("Microsoft YaHei UI", 10))
         style.configure("NavigationActive.TLabel", background=background, foreground="#123B6D", font=("Microsoft YaHei UI", 10, "bold"))
         style.configure("NavigationHover.TLabel", background=background, foreground="#2563EB", font=("Microsoft YaHei UI", 10, "bold"))
@@ -498,8 +505,7 @@ class OrganizerApp(tk.Tk):
         sources.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         sources.columnconfigure(1, weight=1)
         self._source_row(sources, 0)
-        self._path_row(sources, 1, "分类标准（可选）", self.rules_var, self._choose_rules, "选择文件", "留空时自动使用程序同级的 category_rules.txt；也可手动选择其他规则文件。")
-        self._path_row(sources, 2, "复制结果到", self.output_var, self._choose_output, "选择文件夹", "确认后只复制分类结果到这里；原文件绝不会被移动或删除。")
+        self._path_row(sources, 1, "复制结果到", self.output_var, self._choose_output, "选择文件夹", "确认后只复制分类结果到这里；原文件绝不会被移动或删除。")
 
         config = ttk.LabelFrame(setup_tab, text="分类设置", padding=10)
         config.grid(row=1, column=0, sticky="ew", pady=(0, 10))
@@ -523,7 +529,7 @@ class OrganizerApp(tk.Tk):
         scan_area = ttk.LabelFrame(setup_tab, text="开始扫描", padding=10)
         scan_area.grid(row=2, column=0, sticky="ew")
         scan_area.columnconfigure(0, weight=1)
-        self.scan_button = ttk.Button(scan_area, text="扫描并生成分类建议", command=self.start_scan, style="Accent.TButton")
+        self.scan_button = ttk.Button(scan_area, text="扫描并生成分类建议", command=self.start_scan, style="Soft.TButton")
         self.scan_button.grid(row=0, column=0, sticky="w")
         ToolTip(self.scan_button, "读取文件内容并生成建议。扫描过程中不会复制、移动或删除任何文件。")
         self.status_var = tk.StringVar(value="请添加一个或多个资料文件夹；分类标准可留空使用默认模板。")
@@ -538,7 +544,7 @@ class OrganizerApp(tk.Tk):
         edit_button = ttk.Button(review_actions, text="修改选中文件分类", command=self.edit_selected, style="Soft.TButton")
         edit_button.grid(row=0, column=1, padx=(10, 0))
         ToolTip(edit_button, "在表格中选择一个文件后，可手动更正其分类；也可以直接双击该行。")
-        self.copy_button = ttk.Button(review_actions, text="确认后复制分类结果", command=self.copy_results, style="Accent.TButton", state="disabled")
+        self.copy_button = ttk.Button(review_actions, text="确认后复制分类结果", command=self.copy_results, style="Soft.TButton", state="disabled")
         self.copy_button.grid(row=0, column=2, padx=(8, 0))
         ToolTip(self.copy_button, "仅在你确认后执行安全复制；同名文件会自动编号，原始文件保持不变。")
         open_button = ttk.Button(review_actions, text="打开结果文件夹", command=self.open_output, style="Soft.TButton")
@@ -577,10 +583,26 @@ class OrganizerApp(tk.Tk):
 
         rules_panel = ttk.LabelFrame(maintenance_tab, text="分类标准", padding=12)
         rules_panel.grid(row=1, column=0, sticky="ew", pady=(0, 10))
-        ttk.Label(rules_panel, text="分类标准可在“准备资料”页面选择；留空时使用软件自带的默认模板。", style="Muted.TLabel", wraplength=760).grid(row=0, column=0, sticky="w")
-        edit_rules_button = ttk.Button(rules_panel, text="编辑当前分类标准", command=self._edit_rules, style="Soft.TButton")
-        edit_rules_button.grid(row=1, column=0, pady=(10, 0), sticky="w")
-        ToolTip(edit_rules_button, "打开当前分类标准；路径留空时打开程序自带模板。顶格为一级分类，缩进为二级分类。")
+        rules_panel.columnconfigure(1, weight=1)
+        ttk.Label(rules_panel, text="留空时使用软件自带的默认模板；需要替换时可输入或选择自己的 UTF-8 文本文件。", style="Muted.TLabel", wraplength=760).grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(rules_panel, text="自定义规则文件（可选）：").grid(row=1, column=0, pady=(10, 0), sticky="w")
+        rules_entry = ttk.Entry(rules_panel, textvariable=self.rules_var)
+        rules_entry.grid(row=1, column=1, pady=(10, 0), sticky="ew")
+        rules_entry.bind("<FocusOut>", lambda _event: self._validate_rules(show_errors=False))
+        rules_entry.bind("<Return>", lambda _event: self._validate_rules(show_errors=True))
+        choose_rules_button = ttk.Button(rules_panel, text="选择文件", command=self._choose_rules, style="Soft.TButton")
+        choose_rules_button.grid(row=1, column=2, padx=(8, 0), pady=(10, 0))
+        self.rules_status_var = tk.StringVar()
+        ttk.Label(rules_panel, textvariable=self.rules_status_var, style="Status.TLabel", wraplength=760).grid(row=2, column=1, columnspan=2, pady=(5, 0), sticky="w")
+        check_rules_button = ttk.Button(rules_panel, text="检查规则", command=lambda: self._validate_rules(show_errors=True), style="Soft.TButton")
+        check_rules_button.grid(row=3, column=0, pady=(10, 0), sticky="w")
+        reset_rules_button = ttk.Button(rules_panel, text="恢复默认", command=self._use_default_rules, style="Soft.TButton")
+        reset_rules_button.grid(row=3, column=1, padx=(8, 0), pady=(10, 0), sticky="w")
+        edit_rules_button = ttk.Button(rules_panel, text="编辑当前规则", command=self._edit_rules, style="Soft.TButton")
+        edit_rules_button.grid(row=3, column=2, padx=(8, 0), pady=(10, 0), sticky="e")
+        ToolTip(rules_entry, "一级分类顶格书写；二级分类以空格或 Tab 缩进。输入后可点击“检查规则”验证。")
+        ToolTip(edit_rules_button, "默认规则会先复制到你的本机设置目录，再以自定义规则方式打开编辑。")
+        self._validate_rules(show_errors=False)
 
         cache_panel = ttk.LabelFrame(maintenance_tab, text="扫描缓存", padding=12)
         cache_panel.grid(row=2, column=0, sticky="ew")
@@ -662,9 +684,36 @@ class OrganizerApp(tk.Tk):
         chosen = filedialog.askopenfilename(title="选择分类标准.txt", filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")])
         if chosen:
             self.rules_var.set(chosen)
+            self._validate_rules(show_errors=True)
+
+    def _use_default_rules(self) -> None:
+        self.rules_var.set("")
+        self._validate_rules(show_errors=False)
+
+    def _validate_rules(self, *, show_errors: bool) -> CategoryRules | None:
+        rules_file = self._active_rules_file()
+        try:
+            rules = CategoryRules.load(rules_file)
+        except (OSError, ValueError) as error:
+            prefix = "自定义分类标准无效" if self.rules_var.get().strip() else "软件自带的分类标准无效"
+            self.rules_status_var.set(f"{prefix}：{error}")
+            if show_errors:
+                messagebox.showerror(APP_NAME, f"{prefix}：\n{error}")
+            return None
+
+        source = "自定义分类标准" if self.rules_var.get().strip() else "软件自带的默认分类标准"
+        secondary_count = sum(len(children) for children in rules.groups.values())
+        self.rules_status_var.set(f"{source}已通过检查：{len(rules.groups)} 个一级分类，{secondary_count} 个二级分类。")
+        if show_errors:
+            messagebox.showinfo(APP_NAME, self.rules_status_var.get())
+        return rules
 
     def _edit_rules(self) -> None:
-        rules = Path(self.rules_var.get()).expanduser() if self.rules_var.get().strip() else self._editable_default_rules()
+        try:
+            rules = self._active_rules_file() if self.rules_var.get().strip() else self._editable_default_rules()
+        except (OSError, ValueError) as error:
+            messagebox.showerror(APP_NAME, f"无法准备分类标准文件：{error}")
+            return
         if not rules.is_file():
             messagebox.showerror(APP_NAME, "当前分类标准文件不存在，请先选择或创建一个文本文件。")
             return
@@ -680,7 +729,7 @@ class OrganizerApp(tk.Tk):
 
     def _read_inputs(self) -> tuple[list[Path], Path, Path, CategoryRules, int, float]:
         sources = [source.expanduser() for source in self.source_paths]
-        rules_file = Path(self.rules_var.get()).expanduser() if self.rules_var.get().strip() else self._editable_default_rules()
+        rules_file = self._active_rules_file()
         output = Path(self.output_var.get()).expanduser()
         if not sources:
             raise ValueError("请至少添加一个待整理资料文件夹。")
@@ -698,7 +747,9 @@ class OrganizerApp(tk.Tk):
             raise ValueError("历史截止年份不在可用范围内。")
         if not 0 <= threshold <= 1:
             raise ValueError("置信度阈值必须在 0 到 1 之间。")
-        return sources, output, rules_file, CategoryRules.load(rules_file), cutoff_year, threshold
+        rules = CategoryRules.load(rules_file)
+        self._validate_rules(show_errors=False)
+        return sources, output, rules_file, rules, cutoff_year, threshold
 
     def start_scan(self) -> None:
         if self.busy:
@@ -828,12 +879,12 @@ class OrganizerApp(tk.Tk):
         ttk.Label(dialog, text=item.source.name, wraplength=460).grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 8), sticky="w")
         options = ["历史文件", "综合文件", "无法分类"]
         try:
-            rules_file = Path(self.rules_var.get()).expanduser() if self.rules_var.get().strip() else self._editable_default_rules()
+            rules_file = self._active_rules_file()
             rules = CategoryRules.load(rules_file)
             for primary, children in rules.groups.items():
                 options.append(primary)
                 options.extend(f"{primary} / {child}" for child in children)
-        except ValueError:
+        except (OSError, ValueError):
             pass
         choice = tk.StringVar(value=item.label)
         ttk.Label(dialog, text="放入：").grid(row=1, column=0, padx=15, pady=8, sticky="w")
@@ -860,7 +911,7 @@ class OrganizerApp(tk.Tk):
             dialog.destroy()
             self._refresh_table()
 
-        ttk.Button(dialog, text="保存", command=save, style="Accent.TButton").grid(row=2, column=1, padx=15, pady=(4, 15), sticky="e")
+        ttk.Button(dialog, text="保存", command=save, style="Soft.TButton").grid(row=2, column=1, padx=15, pady=(4, 15), sticky="e")
 
     def copy_results(self) -> None:
         if not self.items:

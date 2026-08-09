@@ -36,7 +36,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-copy /Y defaults\category_rules.txt dist\HighSchoolMathFileOrganizer\category_rules.txt >nul
+if exist dist\HighSchoolMathFileOrganizer\category_rules.txt del /Q dist\HighSchoolMathFileOrganizer\category_rules.txt
 xcopy /E /I /Y vendor\tesseract dist\HighSchoolMathFileOrganizer\tesseract >nul
 
 echo.

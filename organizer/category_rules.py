@@ -18,7 +18,12 @@ class CategoryRules:
 
         groups: dict[str, list[str]] = {}
         current_primary: str | None = None
-        for number, raw_line in enumerate(source.read_text(encoding="utf-8-sig").splitlines(), 1):
+        try:
+            lines = source.read_text(encoding="utf-8-sig").splitlines()
+        except UnicodeDecodeError as error:
+            raise ValueError("分类标准文件必须保存为 UTF-8 编码。") from error
+
+        for number, raw_line in enumerate(lines, 1):
             if not raw_line.strip() or raw_line.lstrip().startswith("#"):
                 continue
             is_secondary = raw_line[0].isspace()
@@ -26,6 +31,8 @@ class CategoryRules:
             if is_secondary:
                 if not current_primary:
                     raise ValueError(f"第 {number} 行的二级分类前没有一级分类。")
+                if title in groups[current_primary]:
+                    raise ValueError(f"第 {number} 行的二级分类重复：{current_primary} / {title}")
                 groups[current_primary].append(title)
             else:
                 if title in groups:
