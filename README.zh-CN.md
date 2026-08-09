@@ -55,7 +55,7 @@
 
 ## 打包 Windows 安装版
 
-在 Windows 11 的开发电脑中双击或执行 `build_windows.bat`，即可生成 `dist/高中数学文件分类工具/高中数学文件分类工具.exe`。
+在 Windows 11 的开发电脑中双击或执行 `build_windows.bat`，即可生成 `dist/HighSchoolMathFileOrganizer/HighSchoolMathFileOrganizer.exe`。脚本直接使用 `python` 命令，不依赖额外的 `py` 启动器。
 
 为了做到老师端真正开箱即用，发布前还要把以下 OCR 运行文件随程序一起分发：
 
