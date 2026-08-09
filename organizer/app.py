@@ -118,13 +118,17 @@ class OrganizerApp(tk.Tk):
                     continue
 
     def _load_settings(self) -> None:
-        defaults = {"source": "", "rules": "", "output": "", "year": str(datetime.now().year - 5), "threshold": "0.70", "api_url": DEFAULT_API_URL, "model": DEFAULT_MODEL}
+        defaults = {"source": "", "sources": [], "rules": "", "output": "", "year": str(datetime.now().year - 5), "threshold": "0.70", "api_url": DEFAULT_API_URL, "model": DEFAULT_MODEL}
         try:
             loaded = json.loads(self._settings_path().read_text(encoding="utf-8"))
             defaults.update({key: value for key, value in loaded.items() if key in defaults and key != "rules"})
         except (OSError, json.JSONDecodeError):
             pass
-        self.source_var = tk.StringVar(value=defaults["source"])
+        saved_sources = defaults["sources"] if isinstance(defaults["sources"], list) else []
+        if not saved_sources and defaults["source"]:
+            # Keep the single-folder setting written by older releases usable.
+            saved_sources = [defaults["source"]]
+        self.source_paths = [Path(str(source)).expanduser() for source in saved_sources if str(source).strip()]
         self.rules_var = tk.StringVar(value=defaults["rules"])
         self.output_var = tk.StringVar(value=defaults["output"])
         self.year_var = tk.StringVar(value=defaults["year"])
@@ -161,7 +165,14 @@ class OrganizerApp(tk.Tk):
         style.configure("Treeview.Heading", font=("Microsoft YaHei UI", 9, "bold"), background="#E8EEF8", foreground="#183B67", padding=7)
 
     def _save_settings(self) -> None:
-        settings = {"source": self.source_var.get(), "output": self.output_var.get(), "year": self.year_var.get(), "threshold": self.threshold_var.get(), "api_url": self.api_url_var.get(), "model": self.model_var.get()}
+        settings = {
+            "sources": [str(source) for source in self.source_paths],
+            "output": self.output_var.get(),
+            "year": self.year_var.get(),
+            "threshold": self.threshold_var.get(),
+            "api_url": self.api_url_var.get(),
+            "model": self.model_var.get(),
+        }
         self._settings_path().write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
         if self.api_key_var.get().strip():
             try:
@@ -180,7 +191,7 @@ class OrganizerApp(tk.Tk):
         ttk.Label(header, text=APP_NAME, style="Title.TLabel").pack(anchor="w")
         ttk.Label(header, text="安全复制原文件 · AI 提供建议 · 老师最后复核", style="SubTitle.TLabel").pack(anchor="w", pady=(3, 0))
 
-        self._path_row(outer, 1, "待整理文件夹", self.source_var, self._choose_source, "选择文件夹", "选择需要扫描的资料根文件夹；会递归读取 PDF、DOCX 和 PPTX。")
+        self._source_row(outer, 1)
         self._path_row(outer, 2, "分类标准（可选）", self.rules_var, self._choose_rules, "选择文件", "留空时自动使用程序同级的 category_rules.txt；也可选择资料文件夹中的 分类标准.txt。")
         self._path_row(outer, 3, "复制结果到", self.output_var, self._choose_output, "选择文件夹", "确认后只复制分类结果到这里；原文件绝不会被移动或删除。")
 
@@ -220,7 +231,7 @@ class OrganizerApp(tk.Tk):
         open_button = ttk.Button(actions, text="打开结果文件夹", command=self.open_output)
         open_button.pack(side="left", padx=8)
         ToolTip(open_button, "打开已复制完成的分类结果文件夹。")
-        self.status_var = tk.StringVar(value="请选择资料文件夹；分类标准可留空使用默认模板。")
+        self.status_var = tk.StringVar(value="请添加一个或多个资料文件夹；分类标准可留空使用默认模板。")
         ttk.Label(actions, textvariable=self.status_var).pack(side="right")
 
         columns = ("file", "suggestion", "confidence", "reason", "status")
@@ -247,15 +258,47 @@ class OrganizerApp(tk.Tk):
         ToolTip(entry, hint)
         ToolTip(action, hint)
 
+    def _source_row(self, parent: ttk.Frame, row: int) -> None:
+        hint = "可添加多个资料根文件夹；每个文件夹都会递归扫描。父文件夹与其子文件夹同时添加时，同一文件只会处理一次。"
+        ttk.Label(parent, text="待整理文件夹：").grid(row=row, column=0, sticky="nw", pady=3)
+        source_frame = ttk.Frame(parent)
+        source_frame.grid(row=row, column=1, sticky="ew", pady=3)
+        source_frame.columnconfigure(0, weight=1)
+        self.source_list = tk.Listbox(source_frame, height=3, activestyle="none", exportselection=False)
+        self.source_list.grid(row=0, column=0, sticky="ew")
+        ToolTip(self.source_list, hint)
+        buttons = ttk.Frame(parent)
+        buttons.grid(row=row, column=2, padx=(8, 0), pady=3, sticky="n")
+        add_button = ttk.Button(buttons, text="添加文件夹", command=self._choose_source)
+        add_button.pack(fill="x")
+        remove_button = ttk.Button(buttons, text="移除选中", command=self._remove_selected_source)
+        remove_button.pack(fill="x", pady=(6, 0))
+        ToolTip(add_button, hint)
+        ToolTip(remove_button, "从本次待扫描列表中移除选中的资料文件夹，不会删除电脑中的任何文件。")
+        self._refresh_source_list()
+
+    def _refresh_source_list(self) -> None:
+        self.source_list.delete(0, tk.END)
+        for source in self.source_paths:
+            self.source_list.insert(tk.END, str(source))
+
     def _choose_source(self) -> None:
-        chosen = filedialog.askdirectory(title="选择待整理资料所在文件夹")
+        chosen = filedialog.askdirectory(title="添加待整理资料文件夹")
         if chosen:
-            self.source_var.set(chosen)
-            default_rules = Path(chosen) / "分类标准.txt"
-            if default_rules.is_file():
-                self.rules_var.set(str(default_rules))
+            source = Path(chosen).expanduser().resolve()
+            if source not in self.source_paths:
+                self.source_paths.append(source)
+                self._refresh_source_list()
             if not self.output_var.get():
-                self.output_var.set(str(Path(chosen).parent / "数学资料分类结果"))
+                self.output_var.set(str(source.parent / "数学资料分类结果"))
+
+    def _remove_selected_source(self) -> None:
+        selected = self.source_list.curselection()
+        if not selected:
+            messagebox.showinfo(APP_NAME, "请先选择要移除的资料文件夹。")
+            return
+        del self.source_paths[selected[0]]
+        self._refresh_source_list()
 
     def _choose_rules(self) -> None:
         chosen = filedialog.askopenfilename(title="选择分类标准.txt", filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")])
@@ -277,12 +320,15 @@ class OrganizerApp(tk.Tk):
         if chosen:
             self.output_var.set(chosen)
 
-    def _read_inputs(self) -> tuple[Path, Path, Path, CategoryRules, int, float]:
-        source = Path(self.source_var.get()).expanduser()
+    def _read_inputs(self) -> tuple[list[Path], Path, Path, CategoryRules, int, float]:
+        sources = [source.expanduser() for source in self.source_paths]
         rules_file = Path(self.rules_var.get()).expanduser() if self.rules_var.get().strip() else self._editable_default_rules()
         output = Path(self.output_var.get()).expanduser()
-        if not source.is_dir():
-            raise ValueError("请选择有效的待整理文件夹。")
+        if not sources:
+            raise ValueError("请至少添加一个待整理资料文件夹。")
+        invalid_sources = [str(source) for source in sources if not source.is_dir()]
+        if invalid_sources:
+            raise ValueError(f"以下待整理资料文件夹无效：\n" + "\n".join(invalid_sources))
         if not self.output_var.get().strip():
             raise ValueError("请选择分类结果保存位置。")
         try:
@@ -294,16 +340,16 @@ class OrganizerApp(tk.Tk):
             raise ValueError("历史截止年份不在可用范围内。")
         if not 0 <= threshold <= 1:
             raise ValueError("置信度阈值必须在 0 到 1 之间。")
-        return source, output, rules_file, CategoryRules.load(rules_file), cutoff_year, threshold
+        return sources, output, rules_file, CategoryRules.load(rules_file), cutoff_year, threshold
 
     def start_scan(self) -> None:
         if self.busy:
             return
         try:
-            source, output, rules_file, rules, cutoff_year, threshold = self._read_inputs()
-            files = self._documents_under(source, output)
+            sources, output, rules_file, rules, cutoff_year, threshold = self._read_inputs()
+            files = self._documents_under(sources, output)
             if not files:
-                raise ValueError("这个文件夹内没有 PDF、DOCX 或 PPTX 文件。")
+                raise ValueError("所选文件夹内没有 PDF、DOCX 或 PPTX 文件。")
             historical_files = [file for file in files if datetime.fromtimestamp(file.stat().st_mtime).year < cutoff_year]
             if len(historical_files) != len(files) and not self.api_key_var.get().strip():
                 raise ValueError("请填写 DeepSeek API Key，或将所有文件设为历史文件。")
@@ -318,22 +364,32 @@ class OrganizerApp(tk.Tk):
         self.copy_button.configure(state="disabled")
         threading.Thread(target=self._scan_worker, args=(files, rules, cutoff_year, threshold, self.api_key_var.get().strip(), self.api_url_var.get().strip() or DEFAULT_API_URL, self.model_var.get().strip() or DEFAULT_MODEL), daemon=True).start()
 
-    def _documents_under(self, source: Path, output: Path) -> list[Path]:
-        result: list[Path] = []
+    @staticmethod
+    def _documents_under(sources: list[Path], output: Path) -> list[Path]:
+        result: dict[Path, Path] = {}
         resolved_output = output.resolve()
-        for file in source.rglob("*"):
-            # macOS resource forks (._*) and Microsoft Office lock files (~$*) are not real documents.
-            if file.name.startswith(("._", "~$")):
-                continue
-            if not file.is_file() or file.suffix.lower() not in SUPPORTED_EXTENSIONS:
-                continue
-            try:
-                if file.resolve().is_relative_to(resolved_output):
+        for source in OrganizerApp._non_overlapping_sources(sources):
+            for file in source.rglob("*"):
+                # macOS resource forks (._*) and Microsoft Office lock files (~$*) are not real documents.
+                if file.name.startswith(("._", "~$")):
                     continue
-            except ValueError:
-                pass
-            result.append(file)
-        return sorted(result, key=lambda item: item.name.lower())
+                if not file.is_file() or file.suffix.lower() not in SUPPORTED_EXTENSIONS:
+                    continue
+                resolved_file = file.resolve()
+                if resolved_file.is_relative_to(resolved_output):
+                    continue
+                # Using the resolved path prevents duplicate work when selected folders overlap.
+                result.setdefault(resolved_file, file)
+        return sorted(result.values(), key=lambda item: str(item).lower())
+
+    @staticmethod
+    def _non_overlapping_sources(sources: list[Path]) -> list[Path]:
+        roots: list[Path] = []
+        for source in sorted((source.resolve() for source in sources), key=lambda item: (len(item.parts), str(item).lower())):
+            if any(source.is_relative_to(root) for root in roots):
+                continue
+            roots.append(source)
+        return roots
 
     def _scan_worker(self, files: list[Path], rules: CategoryRules, cutoff_year: int, threshold: float, api_key: str, api_url: str, model: str) -> None:
         for number, file in enumerate(files, 1):
@@ -383,7 +439,8 @@ class OrganizerApp(tk.Tk):
         ttk.Label(dialog, text=item.source.name, wraplength=460).grid(row=0, column=0, columnspan=2, padx=15, pady=(15, 8), sticky="w")
         options = ["历史文件", "综合文件", "无法分类"]
         try:
-            rules = CategoryRules.load(self.rules_var.get())
+            rules_file = Path(self.rules_var.get()).expanduser() if self.rules_var.get().strip() else self._editable_default_rules()
+            rules = CategoryRules.load(rules_file)
             for primary, children in rules.groups.items():
                 options.append(primary)
                 options.extend(f"{primary} / {child}" for child in children)
@@ -415,7 +472,7 @@ class OrganizerApp(tk.Tk):
         if not self.items:
             return
         try:
-            _source, output, _rules, _categories, _year, _threshold = self._read_inputs()
+            _sources, output, _rules, _categories, _year, _threshold = self._read_inputs()
             if messagebox.askyesno(APP_NAME, f"将复制 {len(self.items)} 个文件到：\n{output}\n\n原文件不会被移动或删除。是否继续？"):
                 output.mkdir(parents=True, exist_ok=True)
                 report_rows = []
