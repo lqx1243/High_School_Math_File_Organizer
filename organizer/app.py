@@ -7,11 +7,13 @@ import os
 import shutil
 import sys
 import threading
+import webbrowser
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 import tkinter as tk
+from tkinter import font as tkfont
 
 import keyring
 
@@ -20,6 +22,8 @@ from .classifier import Classification, DEFAULT_API_URL, DEFAULT_MODEL, classify
 from .extractors import SUPPORTED_EXTENSIONS, configure_ocr_engine, extract_document
 
 APP_NAME = "高中数学文件分类工具"
+APP_VERSION = "v0.1.6-beta"
+PROJECT_URL = "https://github.com/lqx1243/High_School_Math_File_Organizer"
 KEYRING_SERVICE = "HighSchoolMathFileOrganizer"
 CACHE_FILE_NAME = "scan_cache.json"
 CACHE_VERSION = 1
@@ -58,6 +62,79 @@ class ToolTip:
         if self.window:
             self.window.destroy()
             self.window = None
+
+
+class RoundedButton(tk.Canvas):
+    """无需额外依赖的轻量圆角按钮，保持 Windows 打包版离线可用。"""
+
+    def __init__(self, parent: tk.Misc, text: str, command, *, primary: bool = False, width: int | None = None) -> None:
+        self.text = text
+        self.command = command
+        self.primary = primary
+        self.button_state = "normal"
+        self.hovered = False
+        self.text_font = tkfont.Font(family="Microsoft YaHei UI", size=9, weight="bold" if primary else "normal")
+        button_width = width or max(104, self.text_font.measure(text) + 34)
+        super().__init__(parent, width=button_width, height=36, bg="#F4F7FB", highlightthickness=0, bd=0, takefocus=1, cursor="hand2")
+        self.bind("<Configure>", lambda _event: self._draw())
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<Button-1>", self._on_click)
+        self.bind("<Return>", self._on_click)
+        self.bind("<space>", self._on_click)
+        self._draw()
+
+    def _colors(self) -> tuple[str, str]:
+        if self.button_state == "disabled":
+            return ("#D8E1EE", "#8A99AD")
+        if self.primary:
+            return ("#1D4ED8" if self.hovered else "#2563EB", "#FFFFFF")
+        return ("#DDEAFE" if self.hovered else "#EEF4FF", "#1E4D86")
+
+    def _draw(self) -> None:
+        self.delete("all")
+        width, height = max(self.winfo_width(), 2), max(self.winfo_height(), 2)
+        radius = min(14, height // 2)
+        fill, foreground = self._colors()
+        self.create_rectangle(radius, 0, width - radius, height, fill=fill, outline="")
+        self.create_rectangle(0, radius, width, height - radius, fill=fill, outline="")
+        self.create_oval(0, 0, radius * 2, radius * 2, fill=fill, outline="")
+        self.create_oval(width - radius * 2, 0, width, radius * 2, fill=fill, outline="")
+        self.create_oval(0, height - radius * 2, radius * 2, height, fill=fill, outline="")
+        self.create_oval(width - radius * 2, height - radius * 2, width, height, fill=fill, outline="")
+        self.create_text(width / 2, height / 2, text=self.text, fill=foreground, font=self.text_font)
+
+    def _on_enter(self, _event=None) -> None:
+        if self.button_state == "normal":
+            self.hovered = True
+            self._draw()
+
+    def _on_leave(self, _event=None) -> None:
+        self.hovered = False
+        self._draw()
+
+    def _on_click(self, _event=None) -> None:
+        if self.button_state == "normal":
+            self.command()
+
+    def configure(self, cnf=None, **kwargs):
+        if cnf:
+            kwargs.update(cnf)
+        if "state" in kwargs:
+            self.button_state = kwargs.pop("state")
+            self.configure(cursor="hand2" if self.button_state == "normal" else "arrow")
+        if "text" in kwargs:
+            self.text = kwargs.pop("text")
+        if "command" in kwargs:
+            self.command = kwargs.pop("command")
+        result = super().configure(**kwargs)
+        self._draw()
+        return result
+
+    config = configure
+
+    def invoke(self) -> None:
+        self._on_click()
 
 
 @dataclass
@@ -304,6 +381,36 @@ class OrganizerApp(tk.Tk):
                     return target
         return target
 
+    def _third_party_notices_text(self) -> str:
+        roots = [Path(sys.executable).parent, Path(getattr(sys, "_MEIPASS", "")), Path(__file__).resolve().parents[1]]
+        for root in roots:
+            notices = root / "THIRD_PARTY_NOTICES.md"
+            if notices.is_file():
+                try:
+                    return notices.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+        return "未找到第三方鸣谢文件。请查看项目主页中的 THIRD_PARTY_NOTICES.md。"
+
+    @staticmethod
+    def _open_project_page(_event=None) -> None:
+        webbrowser.open(PROJECT_URL, new=2)
+
+    def _show_third_party_notices(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("第三方鸣谢与许可证")
+        dialog.transient(self)
+        dialog.geometry("720x500")
+        dialog.minsize(540, 360)
+        dialog.configure(bg="#F4F7FB")
+        ttk.Label(dialog, text="第三方鸣谢与许可证", style="SectionTitle.TLabel").pack(anchor="w", padx=18, pady=(16, 4))
+        ttk.Label(dialog, text="完整内容随软件一同发布，也可在项目主页查看。", style="Muted.TLabel").pack(anchor="w", padx=18, pady=(0, 10))
+        notice = scrolledtext.ScrolledText(dialog, wrap="word", font=("Microsoft YaHei UI", 10), relief="flat", padx=12, pady=10)
+        notice.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+        notice.insert("1.0", self._third_party_notices_text())
+        notice.configure(state="disabled")
+        RoundedButton(dialog, "关闭", dialog.destroy, primary=True).pack(anchor="e", padx=18, pady=(0, 16))
+
     def _configure_window_icon(self) -> None:
         roots = [Path(sys.executable).parent, Path(getattr(sys, "_MEIPASS", "")), Path(__file__).resolve().parents[1]]
         for root in roots:
@@ -352,6 +459,8 @@ class OrganizerApp(tk.Tk):
         style.configure("TLabel", background=background, foreground="#1F2937", font=("Microsoft YaHei UI", 9))
         style.configure("Muted.TLabel", background=background, foreground="#64748B", font=("Microsoft YaHei UI", 9))
         style.configure("Status.TLabel", background=background, foreground="#334155", font=("Microsoft YaHei UI", 9))
+        style.configure("Link.TLabel", background=background, foreground="#2563EB", font=("Microsoft YaHei UI", 9, "underline"))
+        style.configure("SectionTitle.TLabel", background=background, foreground="#123B6D", font=("Microsoft YaHei UI", 14, "bold"))
         style.configure("Title.TLabel", background="#EAF2FF", foreground="#123B6D", font=("Microsoft YaHei UI", 16, "bold"))
         style.configure("SubTitle.TLabel", background="#EAF2FF", foreground="#4B5563", font=("Microsoft YaHei UI", 9))
         style.configure("TLabelframe", background=background, bordercolor="#D7E0ED")
@@ -434,7 +543,7 @@ class OrganizerApp(tk.Tk):
         scan_area = ttk.LabelFrame(setup_tab, text="开始扫描", padding=10)
         scan_area.grid(row=2, column=0, sticky="ew")
         scan_area.columnconfigure(0, weight=1)
-        self.scan_button = ttk.Button(scan_area, text="扫描并生成分类建议", command=self.start_scan, style="Accent.TButton")
+        self.scan_button = RoundedButton(scan_area, "扫描并生成分类建议", self.start_scan, primary=True)
         self.scan_button.grid(row=0, column=0, sticky="w")
         ToolTip(self.scan_button, "读取文件内容并生成建议。扫描过程中不会复制、移动或删除任何文件。")
         self.status_var = tk.StringVar(value="请添加一个或多个资料文件夹；分类标准可留空使用默认模板。")
@@ -446,13 +555,14 @@ class OrganizerApp(tk.Tk):
         review_actions.grid(row=0, column=0, sticky="ew", pady=(0, 9))
         review_actions.columnconfigure(0, weight=1)
         ttk.Label(review_actions, textvariable=self.status_var, style="Status.TLabel", justify="left", wraplength=600).grid(row=0, column=0, sticky="w")
-        edit_button = ttk.Button(review_actions, text="修改选中文件分类", command=self.edit_selected)
+        edit_button = RoundedButton(review_actions, "修改选中文件分类", self.edit_selected)
         edit_button.grid(row=0, column=1, padx=(10, 0))
         ToolTip(edit_button, "在表格中选择一个文件后，可手动更正其分类；也可以直接双击该行。")
-        self.copy_button = ttk.Button(review_actions, text="确认后复制分类结果", command=self.copy_results, state="disabled")
+        self.copy_button = RoundedButton(review_actions, "确认后复制分类结果", self.copy_results)
+        self.copy_button.configure(state="disabled")
         self.copy_button.grid(row=0, column=2, padx=(8, 0))
         ToolTip(self.copy_button, "仅在你确认后执行安全复制；同名文件会自动编号，原始文件保持不变。")
-        open_button = ttk.Button(review_actions, text="打开结果文件夹", command=self.open_output)
+        open_button = RoundedButton(review_actions, "打开结果文件夹", self.open_output)
         open_button.grid(row=0, column=3, padx=(8, 0))
         ToolTip(open_button, "打开已复制完成的分类结果文件夹。")
 
@@ -475,21 +585,32 @@ class OrganizerApp(tk.Tk):
         ToolTip(self.table, "查看 AI 的分类依据和置信度。双击一行即可人工调整结果。")
 
         maintenance_tab.columnconfigure(0, weight=1)
+        about_panel = ttk.LabelFrame(maintenance_tab, text="软件信息", padding=14)
+        about_panel.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        ttk.Label(about_panel, text=APP_VERSION, style="SectionTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(about_panel, text="高中数学文件分类工具 · 本地安全复制与人工复核", style="Muted.TLabel").grid(row=1, column=0, pady=(3, 9), sticky="w")
+        ttk.Label(about_panel, text="项目主页：", style="Muted.TLabel").grid(row=2, column=0, sticky="w")
+        project_link = ttk.Label(about_panel, text=PROJECT_URL, style="Link.TLabel", cursor="hand2")
+        project_link.grid(row=3, column=0, pady=(2, 10), sticky="w")
+        project_link.bind("<Button-1>", self._open_project_page)
+        acknowledgements_button = RoundedButton(about_panel, "查看第三方鸣谢与许可证", self._show_third_party_notices)
+        acknowledgements_button.grid(row=4, column=0, sticky="w")
+
         rules_panel = ttk.LabelFrame(maintenance_tab, text="分类标准", padding=12)
-        rules_panel.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        rules_panel.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         ttk.Label(rules_panel, text="分类标准可在“准备资料”页面选择；留空时使用软件自带的默认模板。", style="Muted.TLabel", wraplength=760).grid(row=0, column=0, sticky="w")
-        edit_rules_button = ttk.Button(rules_panel, text="编辑当前分类标准", command=self._edit_rules)
+        edit_rules_button = RoundedButton(rules_panel, "编辑当前分类标准", self._edit_rules)
         edit_rules_button.grid(row=1, column=0, pady=(10, 0), sticky="w")
         ToolTip(edit_rules_button, "打开当前分类标准；路径留空时打开程序自带模板。顶格为一级分类，缩进为二级分类。")
 
         cache_panel = ttk.LabelFrame(maintenance_tab, text="扫描缓存", padding=12)
-        cache_panel.grid(row=1, column=0, sticky="ew")
+        cache_panel.grid(row=2, column=0, sticky="ew")
         cache_panel.columnconfigure(0, weight=1)
         self.cache_info_var = tk.StringVar()
         self._update_cache_info()
         ttk.Label(cache_panel, textvariable=self.cache_info_var, style="Status.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(cache_panel, text="缓存会保存扫描进度和已完成的分类结果，以便意外关闭后继续；不会保存 API Key。", style="Muted.TLabel", wraplength=760).grid(row=1, column=0, pady=(5, 0), sticky="w")
-        self.clear_cache_button = ttk.Button(cache_panel, text="删除扫描缓存", command=self.clear_scan_cache)
+        self.clear_cache_button = RoundedButton(cache_panel, "删除扫描缓存", self.clear_scan_cache)
         self.clear_cache_button.grid(row=2, column=0, pady=(10, 0), sticky="w")
         ToolTip(self.clear_cache_button, "删除本机保存的扫描进度和分类建议。不会删除原文件、复制结果或分类清单。")
 
@@ -497,7 +618,7 @@ class OrganizerApp(tk.Tk):
         ttk.Label(parent, text=f"{label}：").grid(row=row, column=0, sticky="w", pady=3)
         entry = ttk.Entry(parent, textvariable=variable)
         entry.grid(row=row, column=1, sticky="ew", pady=3)
-        action = ttk.Button(parent, text=button, command=command)
+        action = RoundedButton(parent, button, command)
         action.grid(row=row, column=2, padx=(8, 0), pady=3)
         ToolTip(entry, hint)
         ToolTip(action, hint)
@@ -513,9 +634,9 @@ class OrganizerApp(tk.Tk):
         ToolTip(self.source_list, hint)
         buttons = ttk.Frame(parent)
         buttons.grid(row=row, column=2, padx=(8, 0), pady=3, sticky="n")
-        add_button = ttk.Button(buttons, text="添加文件夹", command=self._choose_source)
+        add_button = RoundedButton(buttons, "添加文件夹", self._choose_source)
         add_button.pack(fill="x")
-        remove_button = ttk.Button(buttons, text="移除选中", command=self._remove_selected_source)
+        remove_button = RoundedButton(buttons, "移除选中", self._remove_selected_source)
         remove_button.pack(fill="x", pady=(6, 0))
         ToolTip(add_button, hint)
         ToolTip(remove_button, "从本次待扫描列表中移除选中的资料文件夹，不会删除电脑中的任何文件。")
@@ -746,7 +867,7 @@ class OrganizerApp(tk.Tk):
             dialog.destroy()
             self._refresh_table()
 
-        ttk.Button(dialog, text="保存", command=save).grid(row=2, column=1, padx=15, pady=(4, 15), sticky="e")
+        RoundedButton(dialog, "保存", save, primary=True).grid(row=2, column=1, padx=15, pady=(4, 15), sticky="e")
 
     def copy_results(self) -> None:
         if not self.items:

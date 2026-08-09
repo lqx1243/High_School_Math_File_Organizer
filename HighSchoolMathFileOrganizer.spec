@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('assets', 'assets'), ('defaults', 'defaults')]
+datas = [('assets', 'assets'), ('defaults', 'defaults'), ('THIRD_PARTY_NOTICES.md', '.')]
 binaries = []
 hiddenimports = ['pythoncom', 'pywintypes']
 tmp_ret = collect_all('win32com')
