@@ -22,7 +22,7 @@ from .classifier import Classification, DEFAULT_API_URL, DEFAULT_MODEL, classify
 from .extractors import SUPPORTED_EXTENSIONS, configure_ocr_engine, extract_document
 
 APP_NAME = "高中数学文件分类工具"
-APP_VERSION = "v0.1.6-beta"
+APP_VERSION = "0.2.0"
 PROJECT_URL = "https://github.com/lqx1243/High_School_Math_File_Organizer"
 KEYRING_SERVICE = "HighSchoolMathFileOrganizer"
 CACHE_FILE_NAME = "scan_cache.json"
@@ -73,6 +73,7 @@ class RoundedButton(tk.Canvas):
         self.primary = primary
         self.button_state = "normal"
         self.hovered = False
+        self.selected = False
         self.text_font = tkfont.Font(family="Microsoft YaHei UI", size=9, weight="bold" if primary else "normal")
         button_width = width or max(104, self.text_font.measure(text) + 34)
         super().__init__(parent, width=button_width, height=36, bg="#F4F7FB", highlightthickness=0, bd=0, takefocus=1, cursor="hand2")
@@ -87,9 +88,11 @@ class RoundedButton(tk.Canvas):
     def _colors(self) -> tuple[str, str]:
         if self.button_state == "disabled":
             return ("#D8E1EE", "#8A99AD")
-        if self.primary:
-            return ("#1D4ED8" if self.hovered else "#2563EB", "#FFFFFF")
-        return ("#DDEAFE" if self.hovered else "#EEF4FF", "#1E4D86")
+        if self.primary or self.selected:
+            return ("#123B78" if self.hovered else "#2563EB", "#FFFFFF")
+        if self.hovered:
+            return ("#2563EB", "#FFFFFF")
+        return ("#E7F0FF", "#1E4D86")
 
     def _draw(self) -> None:
         self.delete("all")
@@ -116,6 +119,10 @@ class RoundedButton(tk.Canvas):
     def _on_click(self, _event=None) -> None:
         if self.button_state == "normal":
             self.command()
+
+    def set_selected(self, selected: bool) -> None:
+        self.selected = selected
+        self._draw()
 
     def configure(self, cnf=None, **kwargs):
         if cnf:
@@ -392,22 +399,49 @@ class OrganizerApp(tk.Tk):
                     continue
         return "未找到第三方鸣谢文件。请查看项目主页中的 THIRD_PARTY_NOTICES.md。"
 
+    def _project_acknowledgements_text(self) -> str:
+        roots = [Path(sys.executable).parent, Path(getattr(sys, "_MEIPASS", "")), Path(__file__).resolve().parents[1]]
+        for root in roots:
+            acknowledgements = root / "ACKNOWLEDGEMENTS.md"
+            if acknowledgements.is_file():
+                try:
+                    return acknowledgements.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+        return "感谢每一位为本项目提供帮助、建议与支持的人。"
+
+    @staticmethod
+    def _readable_markdown(text: str) -> str:
+        """在 Tk 文本框中呈现简洁可读的 Markdown，而不是暴露标记符号。"""
+        lines: list[str] = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if line.startswith("#"):
+                line = line.lstrip("#").strip()
+            if line.startswith("- "):
+                line = "• " + line[2:]
+            line = line.replace("**", "").replace("__", "").replace("`", "")
+            lines.append(line)
+        return "\n".join(lines).strip()
+
     @staticmethod
     def _open_project_page(_event=None) -> None:
         webbrowser.open(PROJECT_URL, new=2)
 
     def _show_third_party_notices(self) -> None:
         dialog = tk.Toplevel(self)
-        dialog.title("第三方鸣谢与许可证")
+        dialog.title("鸣谢与许可证")
         dialog.transient(self)
         dialog.geometry("720x500")
         dialog.minsize(540, 360)
         dialog.configure(bg="#F4F7FB")
-        ttk.Label(dialog, text="第三方鸣谢与许可证", style="SectionTitle.TLabel").pack(anchor="w", padx=18, pady=(16, 4))
-        ttk.Label(dialog, text="完整内容随软件一同发布，也可在项目主页查看。", style="Muted.TLabel").pack(anchor="w", padx=18, pady=(0, 10))
+        ttk.Label(dialog, text="鸣谢与许可证", style="SectionTitle.TLabel").pack(anchor="w", padx=18, pady=(16, 4))
+        ttk.Label(dialog, text="感谢项目开发过程中的每一份帮助；第三方许可证随软件一同发布。", style="Muted.TLabel").pack(anchor="w", padx=18, pady=(0, 10))
         notice = scrolledtext.ScrolledText(dialog, wrap="word", font=("Microsoft YaHei UI", 10), relief="flat", padx=12, pady=10)
         notice.pack(fill="both", expand=True, padx=18, pady=(0, 12))
-        notice.insert("1.0", self._third_party_notices_text())
+        content = "项目鸣谢\n\n" + self._readable_markdown(self._project_acknowledgements_text())
+        content += "\n\n\n第三方鸣谢与许可证\n\n" + self._readable_markdown(self._third_party_notices_text())
+        notice.insert("1.0", content)
         notice.configure(state="disabled")
         RoundedButton(dialog, "关闭", dialog.destroy, primary=True).pack(anchor="e", padx=18, pady=(0, 16))
 
@@ -470,9 +504,6 @@ class OrganizerApp(tk.Tk):
         style.configure("TButton", padding=(10, 6), font=("Microsoft YaHei UI", 9))
         style.configure("Accent.TButton", background="#2563EB", foreground="white")
         style.map("Accent.TButton", background=[("active", "#1D4ED8"), ("disabled", "#A8BCE9")])
-        style.configure("TNotebook", background=background, borderwidth=0)
-        style.configure("TNotebook.Tab", padding=(16, 8), font=("Microsoft YaHei UI", 9, "bold"))
-        style.map("TNotebook.Tab", background=[("selected", "#EAF2FF")], foreground=[("selected", "#123B6D")])
         style.configure("Treeview", rowheight=30, font=("Microsoft YaHei UI", 9), background="white", fieldbackground="white")
         style.configure("Treeview.Heading", font=("Microsoft YaHei UI", 9, "bold"), background="#E8EEF8", foreground="#183B67", padding=7)
 
@@ -497,21 +528,39 @@ class OrganizerApp(tk.Tk):
         outer = ttk.Frame(self, padding=(18, 14))
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
-        outer.rowconfigure(1, weight=1)
+        outer.rowconfigure(2, weight=1)
 
         header = ttk.Frame(outer, style="Header.TFrame", padding=(16, 12))
         header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         ttk.Label(header, text=APP_NAME, style="Title.TLabel").pack(anchor="w")
         ttk.Label(header, text="安全复制原文件 · AI 提供建议 · 老师最后复核", style="SubTitle.TLabel").pack(anchor="w", pady=(3, 0))
 
-        self.notebook = ttk.Notebook(outer)
-        self.notebook.grid(row=1, column=0, sticky="nsew")
-        setup_tab = ttk.Frame(self.notebook, padding=14)
-        self.review_tab = ttk.Frame(self.notebook, padding=14)
-        maintenance_tab = ttk.Frame(self.notebook, padding=14)
-        self.notebook.add(setup_tab, text="1. 准备资料")
-        self.notebook.add(self.review_tab, text="2. 复核与复制")
-        self.notebook.add(maintenance_tab, text="规则与维护")
+        navigation = ttk.Frame(outer)
+        navigation.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self.navigation_buttons_frame = ttk.Frame(navigation)
+        self.navigation_buttons_frame.grid(row=0, column=0, sticky="w")
+        self.navigation_buttons = {
+            "setup": RoundedButton(self.navigation_buttons_frame, "1. 准备资料", lambda: self._show_page("setup"), width=142),
+            "review": RoundedButton(self.navigation_buttons_frame, "2. 复核与复制", lambda: self._show_page("review"), width=142),
+            "maintenance": RoundedButton(self.navigation_buttons_frame, "规则与维护", lambda: self._show_page("maintenance"), width=128),
+        }
+        for column, button in enumerate(self.navigation_buttons.values()):
+            button.grid(row=0, column=column, padx=(0, 8))
+        self.navigation_indicator = tk.Canvas(navigation, height=4, bg="#F4F7FB", highlightthickness=0, bd=0)
+        self.navigation_indicator.grid(row=1, column=0, sticky="ew")
+        self.navigation_animation_id: str | None = None
+        self.navigation_indicator_x = 0.0
+
+        page_container = ttk.Frame(outer)
+        page_container.grid(row=2, column=0, sticky="nsew")
+        page_container.columnconfigure(0, weight=1)
+        page_container.rowconfigure(0, weight=1)
+        setup_tab = ttk.Frame(page_container, padding=14)
+        self.review_tab = ttk.Frame(page_container, padding=14)
+        maintenance_tab = ttk.Frame(page_container, padding=14)
+        self.pages = {"setup": setup_tab, "review": self.review_tab, "maintenance": maintenance_tab}
+        for page in self.pages.values():
+            page.place(relx=0, rely=0, relwidth=1, relheight=1)
 
         setup_tab.columnconfigure(0, weight=1)
         sources = ttk.LabelFrame(setup_tab, text="资料来源与保存位置", padding=10)
@@ -593,7 +642,7 @@ class OrganizerApp(tk.Tk):
         project_link = ttk.Label(about_panel, text=PROJECT_URL, style="Link.TLabel", cursor="hand2")
         project_link.grid(row=3, column=0, pady=(2, 10), sticky="w")
         project_link.bind("<Button-1>", self._open_project_page)
-        acknowledgements_button = RoundedButton(about_panel, "查看第三方鸣谢与许可证", self._show_third_party_notices)
+        acknowledgements_button = RoundedButton(about_panel, "查看鸣谢与许可证", self._show_third_party_notices)
         acknowledgements_button.grid(row=4, column=0, sticky="w")
 
         rules_panel = ttk.LabelFrame(maintenance_tab, text="分类标准", padding=12)
@@ -613,6 +662,43 @@ class OrganizerApp(tk.Tk):
         self.clear_cache_button = RoundedButton(cache_panel, "删除扫描缓存", self.clear_scan_cache)
         self.clear_cache_button.grid(row=2, column=0, pady=(10, 0), sticky="w")
         ToolTip(self.clear_cache_button, "删除本机保存的扫描进度和分类建议。不会删除原文件、复制结果或分类清单。")
+        self.after_idle(lambda: self._show_page("setup", animate=False))
+
+    def _show_page(self, page_name: str, *, animate: bool = True) -> None:
+        self.pages[page_name].tkraise()
+        for name, button in self.navigation_buttons.items():
+            button.set_selected(name == page_name)
+        self.after_idle(lambda: self._animate_navigation_indicator(self.navigation_buttons[page_name], animate))
+
+    def _draw_navigation_indicator(self, x: float, width: float) -> None:
+        self.navigation_indicator.delete("all")
+        self.navigation_indicator.create_rectangle(x + 12, 0, x + width - 12, 4, fill="#2563EB", outline="")
+
+    def _animate_navigation_indicator(self, button: RoundedButton, animate: bool) -> None:
+        self.navigation_buttons_frame.update_idletasks()
+        target_x = self.navigation_buttons_frame.winfo_x() + button.winfo_x()
+        target_width = button.winfo_width()
+        if self.navigation_animation_id:
+            self.after_cancel(self.navigation_animation_id)
+            self.navigation_animation_id = None
+        if not animate:
+            self.navigation_indicator_x = float(target_x)
+            self._draw_navigation_indicator(self.navigation_indicator_x, target_width)
+            return
+        start_x = self.navigation_indicator_x
+        distance = target_x - start_x
+
+        def step(number: int) -> None:
+            progress = number / 7
+            eased = 1 - (1 - progress) ** 3
+            self.navigation_indicator_x = start_x + distance * eased
+            self._draw_navigation_indicator(self.navigation_indicator_x, target_width)
+            if number < 7:
+                self.navigation_animation_id = self.after(16, step, number + 1)
+            else:
+                self.navigation_animation_id = None
+
+        step(1)
 
     def _path_row(self, parent: ttk.Frame, row: int, label: str, variable: tk.StringVar, command, button: str, hint: str) -> None:
         ttk.Label(parent, text=f"{label}：").grid(row=row, column=0, sticky="w", pady=3)
@@ -733,7 +819,7 @@ class OrganizerApp(tk.Tk):
         self._write_scan_cache()
         self._update_cache_info()
         self._refresh_table()
-        self.notebook.select(self.review_tab)
+        self._show_page("review")
         if not pending_files:
             self._scan_finished()
             return
