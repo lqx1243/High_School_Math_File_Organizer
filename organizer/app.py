@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import shutil
@@ -20,6 +21,8 @@ from .extractors import SUPPORTED_EXTENSIONS, configure_ocr_engine, extract_docu
 
 APP_NAME = "高中数学文件分类工具"
 KEYRING_SERVICE = "HighSchoolMathFileOrganizer"
+CACHE_FILE_NAME = "scan_cache.json"
+CACHE_VERSION = 1
 
 
 class ToolTip:
@@ -80,8 +83,12 @@ class OrganizerApp(tk.Tk):
         self._configure_styles()
         self.items: list[ReviewItem] = []
         self.busy = False
+        self.cache_lock = threading.RLock()
         self._load_settings()
+        self.scan_cache, self.cache_load_error = self._load_scan_cache()
+        self.active_cache_key: str | None = None
         self._build_widgets()
+        self.after_idle(self._restore_cached_scan)
 
     def _app_data_dir(self) -> Path:
         base = Path(os.environ.get("APPDATA", Path.home() / ".config")) / "HighSchoolMathFileOrganizer"
@@ -90,6 +97,197 @@ class OrganizerApp(tk.Tk):
 
     def _settings_path(self) -> Path:
         return self._app_data_dir() / "settings.json"
+
+    def _scan_cache_path(self) -> Path:
+        return self._app_data_dir() / CACHE_FILE_NAME
+
+    def _load_scan_cache(self) -> tuple[dict, str | None]:
+        path = self._scan_cache_path()
+        if not path.is_file():
+            return {"version": CACHE_VERSION, "sessions": {}}, None
+        try:
+            cache = json.loads(path.read_text(encoding="utf-8"))
+            if cache.get("version") != CACHE_VERSION or not isinstance(cache.get("sessions"), dict):
+                raise ValueError("缓存格式不受支持")
+            return cache, None
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            return {"version": CACHE_VERSION, "sessions": {}}, str(error)
+
+    def _write_scan_cache(self) -> None:
+        with self.cache_lock:
+            path = self._scan_cache_path()
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(self.scan_cache, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temporary, path)
+            self.cache_load_error = None
+
+    @staticmethod
+    def _file_fingerprint(file: Path) -> dict[str, int]:
+        stat = file.stat()
+        return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+    def _cache_config(self, sources: list[Path], output: Path, rules_file: Path, cutoff_year: int, threshold: float) -> dict:
+        return {
+            "sources": sorted(str(source.resolve()) for source in self._non_overlapping_sources(sources)),
+            "output": str(output.resolve()),
+            "rules_file": str(rules_file.resolve()),
+            "rules_hash": hashlib.sha256(rules_file.read_bytes()).hexdigest(),
+            "cutoff_year": cutoff_year,
+            "threshold": threshold,
+            "api_url": self.api_url_var.get().strip() or DEFAULT_API_URL,
+            "model": self.model_var.get().strip() or DEFAULT_MODEL,
+        }
+
+    @staticmethod
+    def _cache_key(config: dict) -> str:
+        payload = json.dumps(config, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _cache_session(self, key: str, config: dict, create: bool = False) -> dict | None:
+        sessions = self.scan_cache.setdefault("sessions", {})
+        session = sessions.get(key)
+        if session is not None and not isinstance(session, dict):
+            session = None
+        if session is None and create:
+            session = {"config": config, "completed": {}, "failed": {}, "updated_at": datetime.now().isoformat(timespec="seconds")}
+            sessions[key] = session
+        return session
+
+    @staticmethod
+    def _cached_item(file: Path, record: dict) -> ReviewItem | None:
+        try:
+            if record.get("fingerprint") != OrganizerApp._file_fingerprint(file):
+                return None
+            result = record["result"]
+            return ReviewItem(
+                file,
+                Classification(str(result["kind"]), result.get("primary"), result.get("secondary"), float(result["confidence"]), str(result["reason"])),
+                str(record.get("note", "")),
+            )
+        except (KeyError, OSError, TypeError, ValueError):
+            return None
+
+    def _cached_items_for_files(self, session: dict, files: list[Path]) -> dict[Path, ReviewItem]:
+        completed = session.get("completed", {})
+        if not isinstance(completed, dict):
+            return {}
+        restored: dict[Path, ReviewItem] = {}
+        for file in files:
+            item = self._cached_item(file, completed.get(str(file.resolve()), {}))
+            if item:
+                restored[file.resolve()] = item
+        return restored
+
+    def _cache_store_completed(self, cache_key: str | None, item: ReviewItem) -> None:
+        if not cache_key:
+            return
+        with self.cache_lock:
+            session = self._cache_session(cache_key, {}, create=False)
+            if session is None:
+                return
+            completed = session.setdefault("completed", {})
+            failed = session.setdefault("failed", {})
+            file_key = str(item.source.resolve())
+            completed[file_key] = {
+                "status": "completed",
+                "fingerprint": self._file_fingerprint(item.source),
+                "result": {
+                    "kind": item.result.kind,
+                    "primary": item.result.primary,
+                    "secondary": item.result.secondary,
+                    "confidence": item.result.confidence,
+                    "reason": item.result.reason,
+                },
+                "note": item.note,
+            }
+            failed.pop(file_key, None)
+            session["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            self._write_scan_cache()
+
+    def _cache_store_failure(self, cache_key: str | None, file: Path, error: Exception) -> None:
+        if not cache_key:
+            return
+        with self.cache_lock:
+            session = self._cache_session(cache_key, {}, create=False)
+            if session is None:
+                return
+            failed = session.setdefault("failed", {})
+            failed[str(file.resolve())] = {
+                "status": "failed",
+                "fingerprint": self._file_fingerprint(file),
+                "result": {"kind": "unclassifiable", "confidence": 0.0, "reason": f"处理失败：{error}"},
+                "error": str(error),
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            }
+            session["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            self._write_scan_cache()
+
+    @staticmethod
+    def _format_size(size: int) -> str:
+        if size < 1024:
+            return f"{size} B"
+        if size < 1024 * 1024:
+            return f"{size / 1024:.1f} KB"
+        return f"{size / (1024 * 1024):.1f} MB"
+
+    def _update_cache_info(self) -> None:
+        path = self._scan_cache_path()
+        if not path.is_file():
+            self.cache_info_var.set("缓存：无")
+            return
+        if self.cache_load_error:
+            self.cache_info_var.set("缓存：读取失败，可删除")
+            return
+        try:
+            completed = sum(len(session.get("completed", {})) for session in self.scan_cache.get("sessions", {}).values() if isinstance(session, dict))
+            self.cache_info_var.set(f"缓存：{self._format_size(path.stat().st_size)}（已记录 {completed} 项）")
+        except OSError:
+            self.cache_info_var.set("缓存：无法读取")
+
+    def _restore_cached_scan(self) -> None:
+        if not self._scan_cache_path().is_file():
+            return
+        try:
+            sources, output, rules_file, _rules, cutoff_year, threshold = self._read_inputs()
+            files = self._documents_under(sources, output)
+            config = self._cache_config(sources, output, rules_file, cutoff_year, threshold)
+            key = self._cache_key(config)
+            session = self._cache_session(key, config)
+        except (OSError, ValueError):
+            return
+        if session is None:
+            return
+        restored = self._cached_items_for_files(session, files)
+        self.active_cache_key = key
+        self.items = [restored[file.resolve()] for file in files if file.resolve() in restored]
+        self._refresh_table()
+        pending = len(files) - len(self.items)
+        failed = len(session.get("failed", {}))
+        if pending:
+            retry_note = f"，其中 {failed} 项将在继续时重试" if failed else ""
+            self.status_var.set(f"已从缓存恢复 {len(self.items)} 个分类结果；还有 {pending} 个待处理{retry_note}。点击扫描即可继续。")
+        elif self.items:
+            self.copy_button.configure(state="normal")
+            self.status_var.set(f"已从缓存恢复全部 {len(self.items)} 个分类结果。请复核后复制，或删除缓存重新扫描。")
+
+    def clear_scan_cache(self) -> None:
+        if self.busy:
+            return
+        path = self._scan_cache_path()
+        if not path.is_file():
+            messagebox.showinfo(APP_NAME, "当前没有可删除的扫描缓存。")
+            return
+        if not messagebox.askyesno(APP_NAME, "删除所有未完成和已完成的扫描缓存？\n\n这不会删除原文件、分类结果或分类清单。"):
+            return
+        try:
+            path.unlink()
+            self.scan_cache = {"version": CACHE_VERSION, "sessions": {}}
+            self.cache_load_error = None
+            self.active_cache_key = None
+            self._update_cache_info()
+            self.status_var.set("扫描缓存已删除。下次扫描将重新处理文件。")
+        except OSError as error:
+            messagebox.showerror(APP_NAME, f"删除缓存失败：{error}")
 
     def _editable_default_rules(self) -> Path:
         visible_template = Path(sys.executable).parent / "category_rules.txt"
@@ -225,6 +423,9 @@ class OrganizerApp(tk.Tk):
         edit_rules_button = ttk.Button(actions, text="编辑分类标准", command=self._edit_rules)
         edit_rules_button.pack(side="left")
         ToolTip(edit_rules_button, "用记事本打开当前分类标准；路径留空时打开程序自带模板。顶格为一级分类，缩进为二级分类。")
+        self.clear_cache_button = ttk.Button(actions, text="删除扫描缓存", command=self.clear_scan_cache)
+        self.clear_cache_button.pack(side="left", padx=8)
+        ToolTip(self.clear_cache_button, "删除本机保存的扫描进度和分类建议。不会删除原文件、复制结果或分类清单。")
         self.copy_button = ttk.Button(actions, text="2. 确认后复制分类结果", command=self.copy_results, state="disabled")
         self.copy_button.pack(side="left")
         ToolTip(self.copy_button, "仅在你确认后执行安全复制；同名文件会自动编号，原始文件保持不变。")
@@ -232,6 +433,9 @@ class OrganizerApp(tk.Tk):
         open_button.pack(side="left", padx=8)
         ToolTip(open_button, "打开已复制完成的分类结果文件夹。")
         self.status_var = tk.StringVar(value="请添加一个或多个资料文件夹；分类标准可留空使用默认模板。")
+        self.cache_info_var = tk.StringVar()
+        self._update_cache_info()
+        ttk.Label(actions, textvariable=self.cache_info_var).pack(side="right", padx=(0, 16))
         ttk.Label(actions, textvariable=self.status_var).pack(side="right")
 
         columns = ("file", "suggestion", "confidence", "reason", "status")
@@ -353,16 +557,30 @@ class OrganizerApp(tk.Tk):
             historical_files = [file for file in files if datetime.fromtimestamp(file.stat().st_mtime).year < cutoff_year]
             if len(historical_files) != len(files) and not self.api_key_var.get().strip():
                 raise ValueError("请填写 DeepSeek API Key，或将所有文件设为历史文件。")
+            cache_config = self._cache_config(sources, output, rules_file, cutoff_year, threshold)
+            cache_key = self._cache_key(cache_config)
         except Exception as error:
             messagebox.showerror(APP_NAME, str(error))
             return
         self._save_settings()
-        self.items.clear()
+        session = self._cache_session(cache_key, cache_config, create=True)
+        assert session is not None
+        restored = self._cached_items_for_files(session, files)
+        self.active_cache_key = cache_key
+        self.items = [restored[file.resolve()] for file in files if file.resolve() in restored]
+        pending_files = [file for file in files if file.resolve() not in restored]
+        self._write_scan_cache()
+        self._update_cache_info()
         self._refresh_table()
+        if not pending_files:
+            self._scan_finished()
+            return
         self.busy = True
         self.scan_button.configure(state="disabled")
         self.copy_button.configure(state="disabled")
-        threading.Thread(target=self._scan_worker, args=(files, rules, cutoff_year, threshold, self.api_key_var.get().strip(), self.api_url_var.get().strip() or DEFAULT_API_URL, self.model_var.get().strip() or DEFAULT_MODEL), daemon=True).start()
+        self.clear_cache_button.configure(state="disabled")
+        self.status_var.set(f"已从缓存恢复 {len(self.items)} 个结果，正在继续处理 {len(pending_files)} 个文件。")
+        threading.Thread(target=self._scan_worker, args=(pending_files, rules, cutoff_year, threshold, self.api_key_var.get().strip(), self.api_url_var.get().strip() or DEFAULT_API_URL, self.model_var.get().strip() or DEFAULT_MODEL, cache_key), daemon=True).start()
 
     @staticmethod
     def _documents_under(sources: list[Path], output: Path) -> list[Path]:
@@ -391,7 +609,7 @@ class OrganizerApp(tk.Tk):
             roots.append(source)
         return roots
 
-    def _scan_worker(self, files: list[Path], rules: CategoryRules, cutoff_year: int, threshold: float, api_key: str, api_url: str, model: str) -> None:
+    def _scan_worker(self, files: list[Path], rules: CategoryRules, cutoff_year: int, threshold: float, api_key: str, api_url: str, model: str, cache_key: str) -> None:
         for number, file in enumerate(files, 1):
             self.after(0, self.status_var.set, f"正在处理 {number}/{len(files)}：{file.name}")
             try:
@@ -408,15 +626,31 @@ class OrganizerApp(tk.Tk):
                     item = ReviewItem(file, classified, note)
             except Exception as error:
                 item = ReviewItem(file, Classification("unclassifiable", None, None, 0.0, f"处理失败：{error}"))
+                try:
+                    self._cache_store_failure(cache_key, file, error)
+                except Exception as cache_error:
+                    item.note = f"缓存保存失败：{cache_error}"
+            else:
+                try:
+                    self._cache_store_completed(cache_key, item)
+                except Exception as cache_error:
+                    item.note = (item.note + "；" if item.note else "") + f"缓存保存失败：{cache_error}"
             self.items.append(item)
             self.after(0, self._refresh_table)
+            self.after(0, self._update_cache_info)
         self.after(0, self._scan_finished)
 
     def _scan_finished(self) -> None:
         self.busy = False
         self.scan_button.configure(state="normal")
         self.copy_button.configure(state="normal" if self.items else "disabled")
-        self.status_var.set(f"已完成 {len(self.items)} 个文件的扫描。请复核后再复制。")
+        self.clear_cache_button.configure(state="normal")
+        session = self._cache_session(self.active_cache_key, {}, create=False) if self.active_cache_key else None
+        failed = len(session.get("failed", {})) if isinstance(session, dict) else 0
+        if failed:
+            self.status_var.set(f"已完成 {len(self.items)} 个文件的扫描，其中 {failed} 个处理失败；下次点击扫描会重试。请复核后再复制。")
+        else:
+            self.status_var.set(f"已完成 {len(self.items)} 个文件的扫描。请复核后再复制。")
 
     def _refresh_table(self) -> None:
         self.table.delete(*self.table.get_children())
@@ -463,6 +697,11 @@ class OrganizerApp(tk.Tk):
                 item.result = Classification("secondary", primary, secondary, 1.0, "由老师手动指定。")
             else:
                 item.result = Classification("primary_only", value, None, 1.0, "由老师手动指定。")
+            try:
+                self._cache_store_completed(self.active_cache_key, item)
+                self._update_cache_info()
+            except OSError as error:
+                messagebox.showwarning(APP_NAME, f"分类已修改，但缓存保存失败：{error}")
             dialog.destroy()
             self._refresh_table()
 
