@@ -1,6 +1,22 @@
 @echo off
 setlocal
 
+set "APP_NAME=HighSchoolMathFileOrganizer"
+set "APP_VERSION="
+for /f "tokens=3" %%V in ('findstr /B /C:"APP_VERSION = " organizer\app.py') do set "APP_VERSION=%%~V"
+if "%APP_VERSION%"=="" (
+  echo Unable to read APP_VERSION from organizer\app.py.
+  pause
+  exit /b 1
+)
+set "DIST_DIR=%APP_NAME%-windows-x64-v%APP_VERSION%"
+if exist "dist\%DIST_DIR%" (
+  echo Release folder already exists: dist\%DIST_DIR%
+  echo Change APP_VERSION before packaging, or move the existing release folder first.
+  pause
+  exit /b 1
+)
+
 REM Use the working "python" command, not the optional "py" launcher.
 python --version
 if errorlevel 1 (
@@ -30,16 +46,22 @@ if not exist vendor\tesseract\tesseract.exe (
   exit /b 1
 )
 
-.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name "HighSchoolMathFileOrganizer" --icon "assets\app_icon.ico" --add-data "assets;assets" --add-data "defaults;defaults" --add-data "ACKNOWLEDGEMENTS.md;." --add-data "THIRD_PARTY_NOTICES.md;." --collect-all win32com --hidden-import pythoncom --hidden-import pywintypes --collect-all pypdf --collect-all pypdfium2 --collect-all docx --collect-all pptx --collect-all PIL main.py
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --name "%APP_NAME%" --icon "assets\app_icon.ico" --add-data "assets;assets" --add-data "defaults;defaults" --add-data "ACKNOWLEDGEMENTS.md;." --add-data "THIRD_PARTY_NOTICES.md;." --collect-all win32com --hidden-import pythoncom --hidden-import pywintypes --collect-all pypdf --collect-all pypdfium2 --collect-all docx --collect-all pptx --collect-all PIL main.py
 if errorlevel 1 (
   echo Packaging failed. Please send the error text above.
   pause
   exit /b 1
 )
-if exist dist\HighSchoolMathFileOrganizer\category_rules.txt del /Q dist\HighSchoolMathFileOrganizer\category_rules.txt
-xcopy /E /I /Y vendor\tesseract dist\HighSchoolMathFileOrganizer\tesseract >nul
+move "dist\%APP_NAME%" "dist\%DIST_DIR%" >nul
+if errorlevel 1 (
+  echo Failed to rename the release folder.
+  pause
+  exit /b 1
+)
+if exist "dist\%DIST_DIR%\category_rules.txt" del /Q "dist\%DIST_DIR%\category_rules.txt"
+xcopy /E /I /Y vendor\tesseract "dist\%DIST_DIR%\tesseract" >nul
 
 echo.
 echo Build complete:
-echo dist\HighSchoolMathFileOrganizer\HighSchoolMathFileOrganizer.exe
+echo dist\%DIST_DIR%\%APP_NAME%.exe
 pause
