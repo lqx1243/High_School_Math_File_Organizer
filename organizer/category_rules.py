@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -9,6 +9,8 @@ class CategoryRules:
     """一级分类和二级分类。规则来自老师可直接编辑的 UTF-8 文本文件。"""
 
     groups: dict[str, tuple[str, ...]]
+    primary_descriptions: dict[str, str] = field(default_factory=dict)
+    secondary_descriptions: dict[tuple[str, str], str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: str | Path) -> "CategoryRules":
@@ -17,6 +19,8 @@ class CategoryRules:
             raise ValueError(f"找不到分类标准文件：{source}")
 
         groups: dict[str, list[str]] = {}
+        primary_descriptions: dict[str, str] = {}
+        secondary_descriptions: dict[tuple[str, str], str] = {}
         current_primary: str | None = None
         try:
             lines = source.read_text(encoding="utf-8-sig").splitlines()
@@ -27,29 +31,49 @@ class CategoryRules:
             if not raw_line.strip() or raw_line.lstrip().startswith("#"):
                 continue
             is_secondary = raw_line[0].isspace()
-            title = raw_line.strip()
+            title, separator, description = raw_line.strip().partition("::")
+            title = title.strip()
+            description = description.strip()
+            if separator and not description:
+                raise ValueError(f"第 {number} 行的“::”后缺少分类说明。")
+            if not title:
+                raise ValueError(f"第 {number} 行缺少分类名称。")
             if is_secondary:
                 if not current_primary:
                     raise ValueError(f"第 {number} 行的二级分类前没有一级分类。")
                 if title in groups[current_primary]:
                     raise ValueError(f"第 {number} 行的二级分类重复：{current_primary} / {title}")
                 groups[current_primary].append(title)
+                if description:
+                    secondary_descriptions[(current_primary, title)] = description
             else:
                 if title in groups:
                     raise ValueError(f"第 {number} 行的一级分类重复：{title}")
                 groups[title] = []
+                if description:
+                    primary_descriptions[title] = description
                 current_primary = title
 
         if not groups:
             raise ValueError("分类标准文件没有有效分类。")
-        return cls({name: tuple(children) for name, children in groups.items()})
+        return cls({name: tuple(children) for name, children in groups.items()}, primary_descriptions, secondary_descriptions)
 
     def as_prompt(self) -> str:
         lines: list[str] = []
         for primary, secondary_list in self.groups.items():
-            lines.append(f"- {primary}")
-            lines.extend(f"  - {secondary}" for secondary in secondary_list)
+            lines.append(self._prompt_line(primary, self.primary_descriptions.get(primary, "")))
+            lines.extend(f"  {self._prompt_line(secondary, self.secondary_descriptions.get((primary, secondary), ''))}" for secondary in secondary_list)
         return "\n".join(lines)
+
+    def primary_prompt(self) -> str:
+        return "\n".join(self._prompt_line(primary, self.primary_descriptions.get(primary, "")) for primary in self.groups)
+
+    def secondary_prompt(self, primary: str) -> str:
+        return "\n".join(self._prompt_line(secondary, self.secondary_descriptions.get((primary, secondary), "")) for secondary in self.groups.get(primary, ()))
+
+    @staticmethod
+    def _prompt_line(name: str, description: str) -> str:
+        return f"- {name}：{description}" if description else f"- {name}"
 
     def has_primary(self, name: str | None) -> bool:
         return bool(name and name in self.groups)

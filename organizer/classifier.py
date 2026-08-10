@@ -10,6 +10,7 @@ from .category_rules import CategoryRules
 
 DEFAULT_API_URL = "https://api.deepseek.com/chat/completions"
 DEFAULT_MODEL = "deepseek-v4-flash"
+PREFERRED_MODEL_IDS = ("deepseek-v4-flash",)
 
 
 @dataclass(frozen=True)
@@ -34,8 +35,8 @@ def classify_with_deepseek(*, api_key: str, filename: str, content: str, rules: 
     excerpt = content[:18000] or "（未提取到正文；请依据文件名判断，置信度应较低。）"
     primary_prompt = f"""你是高中数学教学资料整理助手。先只判断这份资料的一级分类。
 
-一级分类目录：
-{chr(10).join(f'- {name}' for name in rules.groups)}
+一级分类目录（分类名后的“说明”是重要判定依据）：
+{rules.primary_prompt()}
 
 判定规则：
 1. 文件名是重要证据，应与正文一同判断。
@@ -65,8 +66,8 @@ def classify_with_deepseek(*, api_key: str, filename: str, content: str, rules: 
         return Classification("primary_only", primary, None, primary_confidence, reason)
 
     secondary_prompt = f"""你已确定这份高中数学资料属于一级分类「{primary}」。
-现在仅在以下二级分类中判断：
-{chr(10).join(f'- {name}' for name in children)}
+现在仅在以下二级分类中判断（分类名后的“说明”是重要判定依据）：
+{rules.secondary_prompt(primary)}
 
 文件名是重要证据，应与正文一同判断。若不能可靠归入一个二级分类，kind 必须是 primary_only；不要猜测。
 只输出 JSON，不要 Markdown：
@@ -88,6 +89,25 @@ def _ask_json(api_key: str, prompt: str, api_url: str, model: str) -> dict:
     response = requests.post(api_url, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json={"model": model, "messages": [{"role": "system", "content": "你必须只返回可解析的 JSON。"}, {"role": "user", "content": prompt}], "thinking": {"type": "disabled"}, "temperature": 0.1, "max_tokens": 400, "response_format": {"type": "json_object"}}, timeout=75)
     response.raise_for_status()
     return _parse_json(response.json()["choices"][0]["message"]["content"])
+
+
+def list_available_models(api_key: str, api_url: str = DEFAULT_API_URL) -> list[str]:
+    """验证 API Key 并读取 OpenAI 兼容接口公布的模型列表。"""
+    endpoint = api_url.rstrip("/")
+    suffix = "/chat/completions"
+    if endpoint.endswith(suffix):
+        endpoint = endpoint[: -len(suffix)]
+    models_url = endpoint + "/models"
+    response = requests.get(models_url, headers={"Authorization": f"Bearer {api_key}"}, timeout=20)
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data")
+    if not isinstance(data, list):
+        raise ValueError("模型列表响应格式无效。")
+    models = sorted({str(model.get("id", "")).strip() for model in data if isinstance(model, dict) and str(model.get("id", "")).strip()}, key=str.lower)
+    if not models:
+        raise ValueError("API 未返回可用模型。")
+    return models
 
 
 def _parse_json(answer: str) -> dict:
