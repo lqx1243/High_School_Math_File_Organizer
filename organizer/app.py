@@ -392,8 +392,8 @@ class OrganizerApp(tk.Tk):
         return Path(custom_path).expanduser() if custom_path else self._default_rules_file()
 
     def _editable_default_rules(self) -> Path:
-        """把随软件提供的模板复制到用户目录，再作为自定义规则编辑。"""
-        target = self._app_data_dir() / "分类标准.txt"
+        """为当前软件版本创建独立的默认模板副本，绝不覆盖旧的用户规则。"""
+        target = self._app_data_dir() / f"分类标准-{APP_VERSION}.txt"
         if not target.is_file():
             default_rules = self._default_rules_file()
             if not default_rules.is_file():
