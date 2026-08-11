@@ -1299,7 +1299,6 @@ class OrganizerApp(tk.Tk):
         return shutil.disk_usage(probe)
 
     def _copy_preflight_worker(self, items: list[ReviewItem], output: Path, cache_key: str, skipped_items: list[ReviewItem]) -> None:
-        skipped_count = len(skipped_items)
         records = self._copy_records_snapshot(cache_key, output)
         tasks: list[dict] = []
         planned_hashes: set[str] = set()
@@ -1308,7 +1307,7 @@ class OrganizerApp(tk.Tk):
 
         for number, item in enumerate(items, 1):
             if self.copy_cancel_requested.is_set():
-                self.after(0, self._copy_preflight_finished, tasks, output, cache_key, 0, 0, 0, True, skipped_count)
+                self.after(0, self._copy_preflight_finished, tasks, output, cache_key, 0, 0, 0, True, skipped_items)
                 return
             try:
                 relative = self._relative_destination(item)
@@ -1347,7 +1346,7 @@ class OrganizerApp(tk.Tk):
         except OSError as error:
             self.after(0, self._copy_preflight_error, f"无法读取目标磁盘容量：{error}")
             return
-        self.after(0, self._copy_preflight_finished, tasks, output, cache_key, required, reserve, available, False, skipped_count)
+        self.after(0, self._copy_preflight_finished, tasks, output, cache_key, required, reserve, available, False, skipped_items)
 
     def _copy_preflight_error(self, message: str) -> None:
         self._set_copy_operation_active(False)
@@ -1364,8 +1363,9 @@ class OrganizerApp(tk.Tk):
         reserve: int,
         available: int,
         cancelled: bool,
-        skipped_count: int,
+        skipped_items: list[ReviewItem],
     ) -> None:
+        skipped_count = len(skipped_items)
         if cancelled or self.copy_cancel_requested.is_set():
             self._set_copy_operation_active(False)
             self.copy_progress_area.grid_remove()
