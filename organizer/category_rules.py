@@ -3,6 +3,30 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+INVALID_WINDOWS_PATH_CHARACTERS = set('<>:"/\\|?*')
+WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+}
+MAX_CATEGORY_NAME_LENGTH = 80
+MAX_CATEGORY_DESCRIPTION_LENGTH = 500
+
+
+def validate_category_name(name: str, line_number: int | None = None) -> None:
+    """确保规则名称既可作为 Windows 文件夹名，也不会逃出结果目录。"""
+    prefix = f"第 {line_number} 行的" if line_number else "分类"
+    if name in {".", ".."}:
+        raise ValueError(f"{prefix}分类名称不能是“.”或“..”。")
+    if len(name) > MAX_CATEGORY_NAME_LENGTH:
+        raise ValueError(f"{prefix}分类名称不能超过 {MAX_CATEGORY_NAME_LENGTH} 个字符。")
+    if name.endswith((".", " ")):
+        raise ValueError(f"{prefix}分类名称不能以句点或空格结尾。")
+    if any(character in INVALID_WINDOWS_PATH_CHARACTERS or ord(character) < 32 for character in name):
+        raise ValueError(f"{prefix}分类名称含有 Windows 文件夹不支持的字符：<>:\"/\\|?*。")
+    if name.split(".", 1)[0].upper() in WINDOWS_RESERVED_NAMES:
+        raise ValueError(f"{prefix}分类名称不能使用 Windows 保留名称：{name}。")
+
 
 @dataclass(frozen=True)
 class CategoryRules:
@@ -38,6 +62,9 @@ class CategoryRules:
                 raise ValueError(f"第 {number} 行的“::”后缺少分类说明。")
             if not title:
                 raise ValueError(f"第 {number} 行缺少分类名称。")
+            validate_category_name(title, number)
+            if len(description) > MAX_CATEGORY_DESCRIPTION_LENGTH:
+                raise ValueError(f"第 {number} 行的分类说明不能超过 {MAX_CATEGORY_DESCRIPTION_LENGTH} 个字符。")
             if is_secondary:
                 if not current_primary:
                     raise ValueError(f"第 {number} 行的二级分类前没有一级分类。")
