@@ -1,3 +1,7 @@
+"""文档内容提取：PDF/DOCX/PPTX 文本与 OCR、旧版 Office 格式读取。
+
+针对扫描件与图片型文档做本机 OCR；所有解析都带安全上限，超限会记录原因而不是中断。
+"""
 from __future__ import annotations
 
 import io

@@ -1,3 +1,8 @@
+"""DeepSeek 分类服务：两级分类、正文摘录策略与网络重试。
+
+先选唯一一级分类，再在该一级的二级分类中继续判断；一级置信度不足时自动改用更长
+摘录重试一次。分类目录由规则文件决定，不限于高中数学。
+"""
 from __future__ import annotations
 
 import json
@@ -83,7 +88,7 @@ def classify_with_deepseek(*, api_key: str, filename: str, content: str, rules: 
 
 
 def _primary_prompt(rules: CategoryRules, filename: str, folder_note: str, excerpt: str) -> str:
-    return f"""你是高中数学教学资料整理助手。先只判断这份资料的一级分类。
+    return f"""你是教学资料整理助手。请严格依据下方的分类目录及其说明，先只判断这份资料的一级分类。
 
 一级分类目录（分类名后的“说明”是重要判定依据）：
 {rules.primary_prompt()}
@@ -104,7 +109,7 @@ def _primary_prompt(rules: CategoryRules, filename: str, folder_note: str, excer
 
 
 def _secondary_prompt(rules: CategoryRules, primary: str, filename: str, folder_note: str, excerpt: str) -> str:
-    return f"""你已确定这份高中数学资料属于一级分类「{primary}」。
+    return f"""你已确定这份资料属于一级分类「{primary}」。
 现在仅在以下二级分类中判断（分类名后的“说明”是重要判定依据）：
 {rules.secondary_prompt(primary)}
 

@@ -1,3 +1,9 @@
+"""教学资料文件分类工具：Tk 主界面与全部业务流。
+
+三页导航：准备资料（来源/输出/分类设置）、复核与复制（人工复核后安全复制）、
+规则与维护（分类标准、扫描缓存）。分类标准完全由规则文件决定，默认模板面向高中数学，
+替换规则文件即可用于任意学科或文件整理场景。
+"""
 from __future__ import annotations
 
 import csv
@@ -21,7 +27,7 @@ from .classifier import Classification, DEFAULT_API_URL, DEFAULT_MODEL, PREFERRE
 from .common import csv_safe_cell, sample_file_hash
 from .extractors import ExtractionLimitError, SUPPORTED_EXTENSIONS, close_office_apps, configure_ocr_engine, extract_document
 
-APP_NAME = "高中数学文件分类工具"
+APP_NAME = "教学资料文件分类工具"
 APP_VERSION = "0.2.5"
 PROJECT_URL = "https://github.com/lqx1243/High_School_Math_File_Organizer"
 KEYRING_SERVICE = "HighSchoolMathFileOrganizer"
@@ -506,6 +512,7 @@ class OrganizerApp(tk.Tk):
         elif self.items:
             self.copy_button.configure(state="normal")
             self.status_var.set(f"已从缓存恢复全部 {len(self.items)} 个分类结果。请复核后复制，或删除缓存重新扫描。")
+            self._show_page("review")
 
     def clear_scan_cache(self) -> None:
         if self.busy:
@@ -781,7 +788,7 @@ class OrganizerApp(tk.Tk):
         header = ttk.Frame(outer, style="Header.TFrame", padding=(16, 12))
         header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         ttk.Label(header, text=APP_NAME, style="Title.TLabel").pack(anchor="w")
-        ttk.Label(header, text="安全复制原文件 · AI 提供建议 · 老师最后复核", style="SubTitle.TLabel").pack(anchor="w", pady=(3, 0))
+        ttk.Label(header, text="AI 提供分类建议 · 老师人工复核 · 安全复制原文件", style="SubTitle.TLabel").pack(anchor="w", pady=(3, 0))
 
         navigation = ttk.Frame(outer)
         navigation.grid(row=1, column=0, sticky="ew", pady=(0, 8))
@@ -854,11 +861,8 @@ class OrganizerApp(tk.Tk):
         scan_area.columnconfigure(0, weight=1)
         self.scan_button = ttk.Button(scan_area, text="扫描并生成分类建议", command=self.start_scan, style="Soft.TButton")
         self.scan_button.grid(row=0, column=0, sticky="w")
-        self.stop_scan_button = ttk.Button(scan_area, text="停止扫描", command=self._request_scan_stop, style="Soft.TButton", state="disabled")
-        self.stop_scan_button.grid(row=0, column=1, padx=(10, 0), sticky="w")
-        ToolTip(self.stop_scan_button, "当前文件处理完成后停止；已完成的分类会保留在缓存中，下次点击扫描可继续。")
         ToolTip(self.scan_button, "读取文件内容并生成建议。扫描过程中不会复制、移动或删除任何文件。")
-        self.status_var = tk.StringVar(value="请添加一个或多个资料文件夹；分类标准可留空使用默认模板。")
+        self.status_var = tk.StringVar(value="请添加一个或多个资料文件夹；分类标准可留空使用默认模板，也可自定义为任意学科。")
         ttk.Label(scan_area, textvariable=self.status_var, style="Status.TLabel", justify="left", wraplength=820).grid(row=1, column=0, pady=(9, 0), sticky="w")
 
         self.review_tab.columnconfigure(0, weight=1)
@@ -879,6 +883,9 @@ class OrganizerApp(tk.Tk):
         self.open_button = ttk.Button(review_actions, text="打开结果文件夹", command=self.open_output, style="Soft.TButton")
         self.open_button.grid(row=0, column=4, padx=(8, 0))
         ToolTip(self.open_button, "打开已复制完成的分类结果文件夹。")
+        self.stop_scan_button = ttk.Button(review_actions, text="停止扫描", command=self._request_scan_stop, style="Soft.TButton", state="disabled")
+        self.stop_scan_button.grid(row=0, column=5, padx=(8, 0))
+        ToolTip(self.stop_scan_button, "当前文件处理完成后停止；已完成的分类会保留在缓存中，下次点击扫描可继续。")
 
         copy_progress_area = ttk.Frame(self.review_tab)
         copy_progress_area.grid(row=1, column=0, sticky="ew", pady=(0, 9))
@@ -914,7 +921,7 @@ class OrganizerApp(tk.Tk):
         about_panel = ttk.LabelFrame(maintenance_tab, text="软件信息", padding=14)
         about_panel.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         ttk.Label(about_panel, text=APP_VERSION, style="SectionTitle.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(about_panel, text="高中数学文件分类工具 · 本地安全复制与人工复核", style="Muted.TLabel").grid(row=1, column=0, pady=(3, 9), sticky="w")
+        ttk.Label(about_panel, text="AI 分类建议 · 人工复核 · 本地安全复制", style="Muted.TLabel").grid(row=1, column=0, pady=(3, 9), sticky="w")
         ttk.Label(about_panel, text="项目主页：", style="Muted.TLabel").grid(row=2, column=0, sticky="w")
         project_link = ttk.Label(about_panel, text=PROJECT_URL, style="Link.TLabel", cursor="hand2")
         project_link.grid(row=3, column=0, pady=(2, 10), sticky="w")
@@ -925,7 +932,7 @@ class OrganizerApp(tk.Tk):
         rules_panel = ttk.LabelFrame(maintenance_tab, text="分类标准", padding=12)
         rules_panel.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         rules_panel.columnconfigure(1, weight=1)
-        ttk.Label(rules_panel, text="留空时使用软件自带的默认模板；需要替换时可输入或选择自己的 UTF-8 文本文件。", style="Muted.TLabel", wraplength=760).grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(rules_panel, text="留空时使用软件自带的默认模板（面向高中数学）；需要替换时可输入或选择自己的 UTF-8 文本文件，用于任意学科或文件整理场景。", style="Muted.TLabel", wraplength=760).grid(row=0, column=0, columnspan=3, sticky="w")
         ttk.Label(rules_panel, text="自定义规则文件（可选）：").grid(row=1, column=0, pady=(10, 0), sticky="w")
         rules_entry = ttk.Entry(rules_panel, textvariable=self.rules_var)
         rules_entry.grid(row=1, column=1, pady=(10, 0), sticky="ew")
@@ -1011,7 +1018,7 @@ class OrganizerApp(tk.Tk):
                 self.source_paths.append(source)
                 self._refresh_source_list()
             if not self.output_var.get():
-                self.output_var.set(str(source.parent / "数学资料分类结果"))
+                self.output_var.set(str(source.parent / "教学资料分类结果"))
 
     def _remove_selected_source(self) -> None:
         selected = self.source_list.curselection()
@@ -1044,7 +1051,17 @@ class OrganizerApp(tk.Tk):
 
         source = "自定义分类标准" if self.rules_var.get().strip() else "软件自带的默认分类标准"
         secondary_count = sum(len(children) for children in rules.groups.values())
-        self.rules_status_var.set(f"{source}已通过检查：{len(rules.groups)} 个一级分类，{secondary_count} 个二级分类。")
+        hint = ""
+        if self.active_cache_key:
+            session = self._cache_session(self.active_cache_key, {}, create=False)
+            session_config = session.get("config") if isinstance(session, dict) else None
+            if isinstance(session_config, dict):
+                try:
+                    if hashlib.sha256(rules_file.read_bytes()).hexdigest() != session_config.get("rules_hash"):
+                        hint = "；规则内容与上次扫描不同，重新扫描会重新分类全部文件（会再次调用 API）"
+                except OSError:
+                    pass
+        self.rules_status_var.set(f"{source}已通过检查：{len(rules.groups)} 个一级分类，{secondary_count} 个二级分类。{hint}")
         if show_errors:
             messagebox.showinfo(APP_NAME, self.rules_status_var.get())
         return rules
@@ -1062,6 +1079,7 @@ class OrganizerApp(tk.Tk):
             os.startfile(rules)  # type: ignore[attr-defined]
         else:
             messagebox.showinfo(APP_NAME, f"分类标准文件：{rules}")
+        self.rules_status_var.set("分类标准已在编辑器中打开；保存修改后回到软件，重新扫描即可生效（规则变化会重新分类全部文件）。")
 
     def _choose_output(self) -> None:
         chosen = filedialog.askdirectory(title="选择分类结果保存位置")
@@ -1679,7 +1697,8 @@ class OrganizerApp(tk.Tk):
             messagebox.showwarning(APP_NAME, f"{summary}\n\n{detail}{more}")
             return
         self.status_var.set(f"复制完成：新复制 {copied} 项，跳过重复内容 {duplicates} 项，恢复已完成 {resumed} 项。")
-        messagebox.showinfo(APP_NAME, "复制完成。原文件保持不变，分类清单已保存到结果文件夹。")
+        if messagebox.askyesno(APP_NAME, "复制完成。原文件保持不变，分类清单已保存到结果文件夹。\n\n是否打开结果文件夹？"):
+            self.open_output()
 
     def _relative_destination(self, item: ReviewItem) -> Path:
         result = item.result

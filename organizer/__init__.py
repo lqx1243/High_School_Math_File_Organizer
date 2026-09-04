@@ -1,1 +1,1 @@
-"""Core services for the High School Math File Organizer."""
+"""Core services for the AI-assisted file classification tool."""

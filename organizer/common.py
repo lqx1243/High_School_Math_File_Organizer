@@ -1,3 +1,4 @@
+"""无第三方依赖的通用工具：文件采样哈希、正文首尾节选与 CSV 单元格转义。"""
 from __future__ import annotations
 
 import hashlib
