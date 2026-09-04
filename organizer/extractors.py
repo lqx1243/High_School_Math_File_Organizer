@@ -4,6 +4,7 @@ import io
 import logging
 import os
 import sys
+import threading
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -80,6 +81,12 @@ def _extract_pdf(path: Path) -> ExtractionResult:
         return ExtractionResult(warnings=["PDF 组件尚未安装。"])
     try:
         reader = pypdf.PdfReader(path)
+        if reader.is_encrypted:
+            try:
+                if reader.decrypt("") == pypdf.PasswordType.NOT_DECRYPTED:
+                    return ExtractionResult(warnings=["PDF 已加密，无法读取。"], blocked_reason="PDF 已加密，无法读取。")
+            except Exception as error:
+                return ExtractionResult(warnings=[f"PDF 加密信息无法处理：{error}"], blocked_reason=f"PDF 加密信息无法处理：{error}")
         if len(reader.pages) > MAX_PDF_PAGES:
             raise ExtractionLimitError(f"PDF 超过 {MAX_PDF_PAGES} 页，为避免长时间处理已停止读取。")
         chunks = [page.extract_text() or "" for page in reader.pages]
@@ -135,29 +142,19 @@ def _extract_docx(path: Path) -> ExtractionResult:
 
 
 def _extract_legacy_doc(path: Path) -> ExtractionResult:
-    """通过已安装的 Microsoft Word 读取旧 .doc，不要求用户手动转换。"""
-    word = document = previous_security = None
+    """通过已安装的 Microsoft Word 读取旧 .doc；扫描期间复用同一实例。"""
+    document = None
     try:
-        client = _office_client()
-        word = client.DispatchEx("Word.Application")
-        word.Visible = False
-        word.DisplayAlerts = 0
-        previous_security = _disable_office_macros(word)
+        word, _previous_security = _office_app("Word.Application")
         document = word.Documents.Open(str(path.resolve()), False, True, False)
         return ExtractionResult(text=(document.Content.Text or "").strip())
     except Exception as error:
+        _drop_office_app("Word.Application")
         return ExtractionResult(warnings=[f"无法读取旧 Word .doc：{_office_help(error)}"])
     finally:
         if document is not None:
             try:
                 document.Close(False)
-            except Exception:
-                pass
-        if word is not None:
-            try:
-                if previous_security is not None:
-                    word.AutomationSecurity = previous_security
-                word.Quit()
             except Exception:
                 pass
 
@@ -185,13 +182,10 @@ def _extract_pptx(path: Path) -> ExtractionResult:
 
 
 def _extract_legacy_ppt(path: Path) -> ExtractionResult:
-    """通过已安装的 Microsoft PowerPoint 读取旧 .ppt 的文字内容。"""
-    powerpoint = presentation = previous_security = None
+    """通过已安装的 Microsoft PowerPoint 读取旧 .ppt；扫描期间复用同一实例。"""
+    presentation = None
     try:
-        client = _office_client()
-        powerpoint = client.DispatchEx("PowerPoint.Application")
-        powerpoint.DisplayAlerts = 0
-        previous_security = _disable_office_macros(powerpoint)
+        powerpoint, _previous_security = _office_app("PowerPoint.Application")
         presentation = powerpoint.Presentations.Open(str(path.resolve()), True, False, False)
         parts: list[str] = []
         for slide in presentation.Slides:
@@ -204,6 +198,7 @@ def _extract_legacy_ppt(path: Path) -> ExtractionResult:
                             parts.append(shape.Table.Cell(row, column).Shape.TextFrame.TextRange.Text)
         return ExtractionResult(text="\n".join(parts).strip())
     except Exception as error:
+        _drop_office_app("PowerPoint.Application")
         return ExtractionResult(warnings=[f"无法读取旧 PowerPoint .ppt：{_office_help(error)}"])
     finally:
         if presentation is not None:
@@ -211,23 +206,73 @@ def _extract_legacy_ppt(path: Path) -> ExtractionResult:
                 presentation.Close()
             except Exception:
                 pass
-        if powerpoint is not None:
-            try:
-                if previous_security is not None:
-                    powerpoint.AutomationSecurity = previous_security
-                powerpoint.Quit()
-            except Exception:
-                pass
 
 
-def _office_client():
+_OFFICE_LOCK = threading.Lock()
+_OFFICE_APPS: dict[str, tuple[object, object]] = {}
+
+
+def _office_app(prog_id: str):
+    """启动或复用 Office 实例；实例始终禁用宏并保持隐藏。"""
     if os.name != "nt":
         raise RuntimeError("旧 Office 格式只能在 Windows 上读取")
+    with _OFFICE_LOCK:
+        cached = _OFFICE_APPS.get(prog_id)
+        if cached is not None:
+            return cached
+        try:
+            import win32com.client
+        except ImportError as error:
+            raise RuntimeError("缺少 Windows Office 读取组件") from error
+        try:
+            application = win32com.client.DispatchEx(prog_id)
+        except Exception as error:
+            raise RuntimeError(f"无法启动 {prog_id}：{error}") from error
+        try:
+            previous_security = _disable_office_macros(application)
+        except Exception:
+            try:
+                application.Quit()
+            except Exception:
+                pass
+            raise
+        try:
+            application.Visible = False
+            application.DisplayAlerts = 0
+        except Exception:
+            pass
+        cached = (application, previous_security)
+        _OFFICE_APPS[prog_id] = cached
+        return cached
+
+
+def _drop_office_app(prog_id: str) -> None:
+    """读取失败后丢弃可能处于异常状态的 Office 实例，下次会重新启动。"""
+    with _OFFICE_LOCK:
+        cached = _OFFICE_APPS.pop(prog_id, None)
+    if cached is None:
+        return
+    application, previous_security = cached
     try:
-        import win32com.client
-        return win32com.client
-    except ImportError as error:
-        raise RuntimeError("缺少 Windows Office 读取组件") from error
+        if previous_security is not None:
+            application.AutomationSecurity = previous_security
+        application.Quit()
+    except Exception:
+        pass
+
+
+def close_office_apps() -> None:
+    """扫描结束或退出前关闭所有复用的 Office 实例。"""
+    with _OFFICE_LOCK:
+        cached_apps = list(_OFFICE_APPS.items())
+        _OFFICE_APPS.clear()
+    for _prog_id, (application, previous_security) in cached_apps:
+        try:
+            if previous_security is not None:
+                application.AutomationSecurity = previous_security
+            application.Quit()
+        except Exception:
+            pass
 
 
 def _disable_office_macros(application):
